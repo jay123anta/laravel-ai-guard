@@ -1,0 +1,70 @@
+{
+    "name": "jayanta/laravel-ai-guard",
+    "description": "Protect your Laravel app from AI scrapers, LLM crawlers, and prompt injection attacks",
+    "type": "library",
+    "license": "MIT",
+    "keywords": [
+        "laravel",
+        "ai",
+        "security",
+        "crawler",
+        "bot-detection",
+        "prompt-injection",
+        "middleware",
+        "threat-detection"
+    ],
+    "homepage": "https://github.com/jay123anta/laravel-ai-guard",
+    "authors": [
+        {
+            "name": "Jay Anta",
+            "email": "jay123anta@gmail.com"
+        }
+    ],
+    "support": {
+        "issues": "https://github.com/jay123anta/laravel-ai-guard/issues",
+        "source": "https://github.com/jay123anta/laravel-ai-guard"
+    },
+    "require": {
+        "php": "^8.1",
+        "illuminate/support": "^10.0|^11.0|^12.0",
+        "illuminate/database": "^10.0|^11.0|^12.0",
+        "illuminate/http": "^10.0|^11.0|^12.0",
+        "illuminate/cache": "^10.0|^11.0|^12.0"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^8.0|^9.0|^10.0",
+        "phpunit/phpunit": "^10.0|^11.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "JayAnta\\AiGuard\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "JayAnta\\AiGuard\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "JayAnta\\AiGuard\\AiGuardServiceProvider"
+            ],
+            "aliases": {
+                "AiGuard": "JayAnta\\AiGuard\\Facades\\AiGuard"
+            }
+        }
+    },
+    "scripts": {
+        "test": "vendor/bin/phpunit",
+        "test-coverage": "vendor/bin/phpunit --coverage-html coverage"
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "composer/package-versions-deprecated": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

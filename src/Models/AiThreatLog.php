@@ -124,8 +124,16 @@ class AiThreatLog extends Model
 
     public static function getTimeline(int $hours = 24): Collection
     {
+        $driver = DB::getDriverName();
+
+        $hourExpression = match ($driver) {
+            'sqlite' => "strftime('%Y-%m-%d %H:00:00', created_at)",
+            'pgsql' => "to_char(created_at, 'YYYY-MM-DD HH24:00:00')",
+            default => "DATE_FORMAT(created_at, '%Y-%m-%d %H:00:00')",
+        };
+
         return static::where('created_at', '>=', now()->subHours($hours))
-            ->select(DB::raw('DATE_FORMAT(created_at, "%Y-%m-%d %H:00:00") as hour'), DB::raw('COUNT(*) as total'))
+            ->select(DB::raw("{$hourExpression} as hour"), DB::raw('COUNT(*) as total'))
             ->groupBy('hour')
             ->orderBy('hour')
             ->get();

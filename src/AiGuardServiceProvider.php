@@ -6,7 +6,12 @@ use Illuminate\Support\ServiceProvider;
 use JayAnta\AiGuard\AiGuardManager;
 use JayAnta\AiGuard\Console\Commands\AiGuardStats;
 use JayAnta\AiGuard\Services\AiDetector;
+use JayAnta\AiGuard\Services\HoneypotService;
+use JayAnta\AiGuard\Services\MlDetector;
 use JayAnta\AiGuard\Services\PromptInjectionDetector;
+use JayAnta\AiGuard\Services\RequestFingerprinter;
+use JayAnta\AiGuard\Services\ResponseScanner;
+use JayAnta\AiGuard\Services\RobotsTxtEnforcer;
 
 class AiGuardServiceProvider extends ServiceProvider
 {
@@ -19,6 +24,16 @@ class AiGuardServiceProvider extends ServiceProvider
         $this->app->singleton(AiDetector::class, fn ($app) => new AiDetector(config('ai-guard') ?? []));
 
         $this->app->singleton(PromptInjectionDetector::class, fn ($app) => new PromptInjectionDetector(config('ai-guard') ?? []));
+
+        $this->app->singleton(HoneypotService::class, fn ($app) => new HoneypotService(config('ai-guard') ?? []));
+
+        $this->app->singleton(ResponseScanner::class, fn ($app) => new ResponseScanner(config('ai-guard') ?? []));
+
+        $this->app->singleton(RobotsTxtEnforcer::class, fn ($app) => new RobotsTxtEnforcer(config('ai-guard') ?? []));
+
+        $this->app->singleton(RequestFingerprinter::class, fn ($app) => new RequestFingerprinter(config('ai-guard') ?? []));
+
+        $this->app->singleton(MlDetector::class, fn ($app) => new MlDetector(config('ai-guard') ?? []));
     }
 
     public function boot(): void

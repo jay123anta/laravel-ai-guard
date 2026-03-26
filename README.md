@@ -11,7 +11,17 @@ Protect your Laravel app from AI scrapers, LLM crawlers, and prompt injection at
 
 ## What It Does
 
-Laravel AI Guard is a middleware-based security package that detects and blocks AI-related threats to your application. It identifies 20+ known AI crawler user-agents (GPTBot, ClaudeBot, CCBot, and others), scans incoming requests for prompt injection attacks targeting your AI features, and flags data harvesters using generic automation tools. All detections are logged to your database with a built-in dashboard for monitoring.
+Laravel AI Guard is a middleware-based security package with a multi-layer detection pipeline:
+
+- **149 bot signatures** across 7 categories (AI training, AI assistants, SEO tools, scrapers, bad bots, data harvesters, search engines) with per-category confidence scoring
+- **30 prompt injection patterns** across 7 attack categories, with recursive nested input scanning
+- **Honeypot trap routes** — hidden paths that real users never visit, instant 100 confidence on hit
+- **PII leak detection** — scans outgoing responses for emails, credit cards, SSNs, API keys, JWTs, AWS keys, private keys, and database URLs
+- **robots.txt enforcement** — boosts confidence when bots violate your Disallow rules
+- **Request fingerprinting** — detects bots faking browser user-agents by analyzing header patterns
+- **Optional ML detection** — pluggable ML providers (Lakera, HuggingFace, Pangea, LLM Guard, Ollama, or custom) for borderline cases, zero dependencies
+
+All detections are logged to your database with a built-in dashboard, 10 REST API endpoints, an Artisan command, and Slack alerts.
 
 ## Installation
 
@@ -55,6 +65,23 @@ protected $middleware = [
 
 That's it. AI Guard is now monitoring all incoming requests in `log_only` mode.
 
+## Detection Pipeline
+
+Every request passes through this pipeline:
+
+```
+Request
+  1. Whitelist check         → skip if IP/UA whitelisted
+  2. Honeypot trap check     → instant 100 confidence
+  3. Bot signature detection → 149 bots, 7 categories
+     a. robots.txt check     → boost confidence if Disallow violated
+  4. Prompt injection scan   → 30 patterns, recursive input scanning
+     a. ML enhancement       → optional, borderline cases only
+  5. Fingerprint analysis    → header order, missing headers, Accept anomalies
+  6. Action                  → log / block / rate_limit based on mode + threshold
+  7. Response scanning       → outbound PII leak detection
+```
+
 ## Configuration
 
 After publishing, the config file is at `config/ai-guard.php`.
@@ -77,7 +104,27 @@ After publishing, the config file is at `config/ai-guard.php`.
 'confidence_threshold' => 70,
 ```
 
-### AI Crawlers
+### Bot Signatures (149 bots, 7 categories)
+
+```php
+'bot_signatures' => [
+    'enabled' => true,
+    // Categories to DISABLE (search_engines disabled by default — don't block Google)
+    'disabled_categories' => ['search_engines'],
+],
+```
+
+| Category | Bots | Default Confidence | Enabled |
+|----------|------|--------------------|---------|
+| `ai_training` | GPTBot, ClaudeBot, CCBot, Bytespider, Diffbot, + 27 more | 95 | Yes |
+| `ai_assistants` | PerplexityBot, YouBot, PhindBot, KagiBot, + 6 more | 90 | Yes |
+| `seo_tools` | AhrefsBot, SemrushBot, MJ12bot, DotBot, + 21 more | 60 | Yes |
+| `scrapers` | HeadlessChrome, PhantomJS, Puppeteer, Playwright, + 17 more | 85 | Yes |
+| `bad_bots` | Nikto, sqlmap, Nessus, Nmap, nuclei, + 25 more | 95 | Yes |
+| `data_harvesters` | curl, python-requests, Go-http-client, Wget, + 11 more | 80 | Yes |
+| `search_engines` | Googlebot, Bingbot, YandexBot, Baidu, + 11 more | 30 | No (disabled) |
+
+You can also define custom AI crawler user-agents in the `ai_crawlers` config section:
 
 ```php
 'ai_crawlers' => [
@@ -85,8 +132,7 @@ After publishing, the config file is at `config/ai-guard.php`.
     'user_agents' => [
         'GPTBot', 'ChatGPT-User', 'Claude-Web', 'ClaudeBot', 'anthropic-ai',
         'CCBot', 'PerplexityBot', 'YouBot', 'cohere-ai', 'AI2Bot',
-        'Bytespider', 'Diffbot', 'ImagesiftBot', 'Omgilibot', 'Applebot-Extended',
-        'DataForSeoBot', 'PetalBot', 'Scrapy', 'AhrefsBot', 'SemrushBot',
+        // Add your own...
     ],
 ],
 ```
@@ -102,17 +148,95 @@ After publishing, the config file is at `config/ai-guard.php`.
 ],
 ```
 
-### Data Harvesters
+### Honeypot Traps
 
 ```php
-'data_harvesters' => [
+'honeypot' => [
     'enabled' => true,
-    'check_accept_language' => true,  // Flag missing Accept-Language header
-    'check_sequential_urls' => false, // Disabled by default (too noisy)
-    'generic_user_agents' => [
-        'curl', 'python-requests', 'Go-http-client', 'Java/',
-        'libwww-perl', 'Wget', 'HTTPie', 'axios', 'node-fetch',
-    ],
+    'trap_paths' => null,  // null = use 30 default trap paths, or provide your own array
+],
+```
+
+Default trap paths include `/admin-backup`, `/wp-admin`, `/.env`, `/.git/config`, `/api/v1/users.json`, `/backup.sql`, `/phpinfo.php`, and 23 more. Any request to a trap path scores 100 confidence instantly.
+
+### Response Scanning (PII Leak Detection)
+
+```php
+'response_scanning' => [
+    'enabled' => false,           // Off by default — enable when your app has AI features
+    'max_response_length' => 50000,
+    'scan_email' => true,
+    'scan_phone' => true,
+    'scan_credit_card' => true,
+    'scan_ssn' => true,
+    'scan_api_key' => true,
+    'scan_aws_key' => true,
+    'scan_private_key' => true,
+    'scan_jwt_token' => true,
+    'scan_ip_address' => false,   // Disabled — too noisy for most apps
+    'scan_database_url' => true,
+],
+```
+
+Scans outgoing HTML, JSON, and text responses for leaked PII before they leave your server.
+
+### robots.txt Enforcement
+
+```php
+'robots_txt' => [
+    'enabled' => false,
+    'confidence_boost' => 30,   // Extra points if bot violates Disallow rules
+    'cache_minutes' => 60,
+],
+```
+
+Parses your `public/robots.txt` and boosts confidence by 30 when a detected bot is crawling a disallowed path.
+
+### Request Fingerprinting
+
+```php
+'fingerprinting' => [
+    'enabled' => false,
+    'min_score' => 30,
+],
+```
+
+Analyzes 5 signals: missing browser headers, alphabetical header order, anomalous Accept header, no keep-alive, no navigation context. Catches bots that fake browser user-agent strings.
+
+### ML Detection (Optional)
+
+```php
+'ml_detection' => [
+    'enabled' => false,           // Off by default — package stays lightweight
+    'driver' => 'lakera',         // lakera, huggingface, pangea, llm_guard, ollama, custom
+    'trigger_range' => [40, 85],  // Only call ML for borderline regex scores
+    'regex_weight' => 0.4,        // Combined score: regex 40% + ML 60%
+],
+```
+
+ML runs **only when regex flags something borderline** (score between 40-85). 99% of requests never touch ML.
+
+| Driver | Provider | Cost | Latency | Data Privacy |
+|--------|----------|------|---------|-------------|
+| `lakera` | [Lakera Guard](https://platform.lakera.ai/) | 10K free/mo | 50-150ms | SaaS |
+| `huggingface` | [Meta Prompt Guard](https://huggingface.co/meta-llama/Prompt-Guard-86M) | ~1K free/day | 200-500ms | SaaS |
+| `pangea` | [Pangea AI Guard](https://pangea.cloud/) | Free community | 100-300ms | SaaS |
+| `llm_guard` | [LLM Guard](https://llm-guard.com/) | Free (self-hosted) | 100-500ms | Self-hosted |
+| `ollama` | [Ollama](https://ollama.com/) | Free | 50-200ms | Self-hosted |
+| `custom` | Your own endpoint | Varies | Varies | You control |
+
+To enable, add your API key to `.env` and set `enabled` to `true`:
+
+```bash
+# .env
+AI_GUARD_LAKERA_KEY=your-key-here
+```
+
+```php
+// config/ai-guard.php
+'ml_detection' => [
+    'enabled' => true,
+    'driver' => 'lakera',
 ],
 ```
 
@@ -134,26 +258,6 @@ After publishing, the config file is at `config/ai-guard.php`.
     'slack_webhook' => null,                  // Your Slack webhook URL
     'alert_threshold' => 90,                  // Only alert above this score
     'alert_on' => ['block', 'rate_limited'],  // Which actions trigger alerts
-],
-```
-
-### Dashboard
-
-```php
-'dashboard' => [
-    'enabled' => true,
-    'path' => 'ai-guard',        // Available at /ai-guard
-    'middleware' => ['web'],
-],
-```
-
-### API
-
-```php
-'api' => [
-    'enabled' => true,
-    'prefix' => 'ai-guard',      // Routes at /ai-guard/api/*
-    'middleware' => ['api'],
 ],
 ```
 
@@ -179,7 +283,7 @@ http://your-app.com/ai-guard
 The dashboard shows:
 
 - Total threats detected in the last 24 hours
-- Breakdown by threat type (AI crawlers, prompt injections, data harvesters)
+- Breakdown by threat type (AI crawlers, prompt injections, data harvesters, honeypot traps, bad bots, PII leaks)
 - Count of blocked and rate-limited requests
 - Top threat sources and IP addresses
 - Recent threat log with confidence scores and actions taken
@@ -216,7 +320,7 @@ All endpoints are prefixed with your configured prefix (default: `/ai-guard`).
 | GET | `/ai-guard/api/confidence-breakdown` | High/medium/low breakdown |
 | GET | `/ai-guard/api/detector-info` | Detector config and pattern counts |
 | POST | `/ai-guard/api/threats/{id}/false-positive` | Mark threat as false positive |
-| DELETE | `/ai-guard/api/flush` | Delete threat logs |
+| DELETE | `/ai-guard/api/flush` | Delete threat logs (requires `?confirm=yes`) |
 
 ### Query Parameters
 
@@ -224,16 +328,10 @@ All endpoints are prefixed with your configured prefix (default: `/ai-guard`).
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| hours | 24 | Lookback window |
-| limit | 50 | Results per page |
+| hours | 24 | Lookback window (max 8760) |
+| limit | 50 | Results per page (max 200) |
 | threat_type | — | Filter: `ai_crawler`, `prompt_injection`, `data_harvester` |
 | action_taken | — | Filter: `logged`, `blocked`, `rate_limited` |
-
-**DELETE /ai-guard/api/flush**
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| hours | — | Delete records older than N hours. Omit to delete all. |
 
 ## Artisan Command
 
@@ -270,52 +368,31 @@ Top Threat IPs:
 | 91.108.4.0     | 22   | 95             |
 | 203.0.113.50   | 15   | 80             |
 +----------------+------+----------------+
-
-Top Threat Sources:
-+------------------+------+
-| Source           | Hits |
-+------------------+------+
-| GPTBot           | 45   |
-| ClaudeBot        | 28   |
-| curl             | 19   |
-+------------------+------+
-
-Confidence Breakdown:
-+----------------+-------+
-| Level          | Count |
-+----------------+-------+
-| High (90+)     | 89    |
-| Medium (70-89) | 41    |
-| Low (<70)      | 12    |
-+----------------+-------+
 ```
 
 ## Detection Details
 
-### AI Crawlers Detected
+### Bot Signatures (149 bots in 7 categories)
 
-| Bot Name | Company | Purpose |
-|----------|---------|---------|
-| GPTBot | OpenAI | Training data collection |
-| ChatGPT-User | OpenAI | ChatGPT browsing feature |
-| Claude-Web | Anthropic | Claude web browsing |
-| ClaudeBot | Anthropic | Training data collection |
-| anthropic-ai | Anthropic | General crawling |
-| CCBot | Common Crawl | Open web corpus |
-| PerplexityBot | Perplexity AI | Search index |
-| YouBot | You.com | Search index |
-| cohere-ai | Cohere | Training data collection |
-| AI2Bot | Allen AI | Research crawling |
-| Bytespider | ByteDance | Training data collection |
-| Diffbot | Diffbot | Structured data extraction |
-| ImagesiftBot | Imagesift | Image indexing |
-| Omgilibot | Omgili | Discussion crawling |
-| Applebot-Extended | Apple | Extended crawling for AI |
-| DataForSeoBot | DataForSEO | SEO data collection |
-| PetalBot | Huawei | Search index |
-| Scrapy | Open source | Web scraping framework |
-| AhrefsBot | Ahrefs | SEO crawling |
-| SemrushBot | Semrush | SEO crawling |
+**AI Training Bots** (confidence: 95)
+
+GPTBot, ChatGPT-User, OAI-SearchBot, Claude-Web, ClaudeBot, anthropic-ai, CCBot, Google-Extended, Bytespider, Diffbot, FacebookBot, cohere-ai, AI2Bot, Applebot-Extended, ImagesiftBot, Omgilibot, Timpibot, Kangaroo Bot, meta-externalagent, Amazonbot, facebookexternalhit, and more.
+
+**AI Assistants** (confidence: 90)
+
+PerplexityBot, YouBot, PhindBot, KagiBot, BraveSearch, NeevaBot, MetaAI, Copilot, and more.
+
+**SEO Tools** (confidence: 60)
+
+AhrefsBot, SemrushBot, MJ12bot, DotBot, BLEXBot, DataForSeoBot, PetalBot, MajesticSEO, and more.
+
+**Malicious Bots** (confidence: 95)
+
+Nikto, sqlmap, Nessus, Nmap, Masscan, Acunetix, Burp, dirbuster, gobuster, wpscan, nuclei, and more.
+
+**Scrapers** (confidence: 85)
+
+HeadlessChrome, PhantomJS, Puppeteer, Playwright, Selenium, WebDriver, CasperJS, and more.
 
 ### Prompt Injection Patterns
 
@@ -329,9 +406,30 @@ Confidence Breakdown:
 - **Data Extraction** — "dump all data", "output all records", "bypass validation"
 - **Token Manipulation** — `<|im_start|>`, `<|im_end|>`, `[INST]`, `<<SYS>>`
 
-### Data Harvester Signals
+### PII Leak Detection (10 patterns)
 
-Detection triggers:
+Scans outgoing responses for:
+
+| Pattern | Severity | Default |
+|---------|----------|---------|
+| Email addresses | 70 | Enabled |
+| Phone numbers | 75 | Enabled |
+| Credit card numbers | 95 | Enabled |
+| Social Security numbers | 95 | Enabled |
+| API keys / tokens | 90 | Enabled |
+| AWS access keys | 95 | Enabled |
+| Private keys (RSA/EC/DSA) | 95 | Enabled |
+| JWT tokens | 85 | Enabled |
+| Internal IP addresses | 50 | Disabled |
+| Database connection strings | 95 | Enabled |
+
+### Honeypot Trap Routes (30 default paths)
+
+Hidden paths that real users never visit. Any hit scores 100 confidence instantly:
+
+`/admin-backup`, `/wp-admin`, `/wp-login.php`, `/.env`, `/.git/config`, `/.aws/credentials`, `/phpinfo.php`, `/api/v1/users.json`, `/backup.sql`, `/database.sql`, `/users.csv`, and 19 more.
+
+### Data Harvester Signals
 
 - Generic automation user-agents: curl, python-requests, Go-http-client, Wget, and others
 - Missing `Accept-Language` header (adds +20 to confidence score)
@@ -370,6 +468,9 @@ $mode = AiGuard::getMode();
 
 // Get detector configuration info
 $info = AiGuard::getDetectorInfo();
+
+// Get full feature status (v2)
+$features = AiGuard::getFeatureStatus();
 ```
 
 ## False Positives
@@ -409,6 +510,19 @@ The test suite includes 53 full-cycle tests with 492 assertions:
 - **Unit tests (35)** — AiDetector and PromptInjectionDetector covering all 7 attack categories, confidence stacking, whitelist bypass, config toggles, recursive scanning, and edge cases
 
 ## Changelog
+
+### 2.0.0
+
+- 149 curated bot signatures across 7 categories with per-category confidence scoring
+- Honeypot trap routes (30 default paths, instant 100 confidence)
+- PII leak detection — scans outgoing responses for 10 sensitive data patterns
+- robots.txt enforcement — boosts confidence when bots violate Disallow rules
+- Request fingerprinting — 5-signal analysis to detect bots faking browser UAs
+- Optional ML detection — 6 pluggable providers (Lakera, HuggingFace, Pangea, LLM Guard, Ollama, custom), zero dependencies
+- New threat types: honeypot_trap, pii_leak, bad_bot, scraper, seo_bot, suspicious_fingerprint
+- New query scopes: honeypotTraps(), piiLeaks(), badBots(), scrapers()
+- Expanded stats: honeypot_traps, pii_leaks, bad_bots, scrapers in getThreatSummary()
+- getFeatureStatus() facade method for full feature overview
 
 ### 1.0.0
 

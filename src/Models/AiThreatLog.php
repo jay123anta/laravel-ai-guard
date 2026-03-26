@@ -97,6 +97,10 @@ class AiThreatLog extends Model
             'ai_crawlers' => (clone $query)->where('threat_type', 'ai_crawler')->count(),
             'prompt_injections' => (clone $query)->where('threat_type', 'prompt_injection')->count(),
             'data_harvesters' => (clone $query)->where('threat_type', 'data_harvester')->count(),
+            'honeypot_traps' => (clone $query)->where('threat_type', 'honeypot_trap')->count(),
+            'pii_leaks' => (clone $query)->where('threat_type', 'pii_leak')->count(),
+            'bad_bots' => (clone $query)->where('threat_type', 'bad_bot')->count(),
+            'scrapers' => (clone $query)->where('threat_type', 'scraper')->count(),
             'blocked' => (clone $query)->where('action_taken', 'blocked')->count(),
             'rate_limited' => (clone $query)->where('action_taken', 'rate_limited')->count(),
         ];
@@ -183,7 +187,39 @@ class AiThreatLog extends Model
             'prompt_injection' => 'Prompt Injection',
             'data_harvester' => 'Data Harvester',
             'api_abuser' => 'API Abuser',
-            default => ucfirst($this->threat_type ?? 'Unknown'),
+            'honeypot_trap' => 'Honeypot Trap',
+            'pii_leak' => 'PII Leak',
+            'robots_txt_violation' => 'Robots.txt Violation',
+            'suspicious_fingerprint' => 'Suspicious Fingerprint',
+            'seo_bot' => 'SEO Bot',
+            'scraper' => 'Web Scraper',
+            'bad_bot' => 'Malicious Bot',
+            'search_engine' => 'Search Engine',
+            default => ucfirst(str_replace('_', ' ', $this->threat_type ?? 'Unknown')),
         };
+    }
+
+    // -------------------------------------------------------------------------
+    // v2 Scopes
+    // -------------------------------------------------------------------------
+
+    public function scopeHoneypotTraps(Builder $query): Builder
+    {
+        return $query->where('threat_type', 'honeypot_trap');
+    }
+
+    public function scopePiiLeaks(Builder $query): Builder
+    {
+        return $query->where('threat_type', 'pii_leak');
+    }
+
+    public function scopeBadBots(Builder $query): Builder
+    {
+        return $query->where('threat_type', 'bad_bot');
+    }
+
+    public function scopeScrapers(Builder $query): Builder
+    {
+        return $query->where('threat_type', 'scraper');
     }
 }

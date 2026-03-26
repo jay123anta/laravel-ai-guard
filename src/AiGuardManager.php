@@ -46,6 +46,22 @@ class AiGuardManager
         return $aiResult;
     }
 
+    public function detectText(string $text): array
+    {
+        if (!$this->isEnabled()) {
+            return [
+                'detected' => false,
+                'threat_type' => null,
+                'threat_source' => null,
+                'confidence_score' => 0,
+                'matched_pattern' => null,
+                'payload_snippet' => null,
+            ];
+        }
+
+        return $this->promptDetector->scanValue($text);
+    }
+
     public function isEnabled(): bool
     {
         return $this->config['enabled'] ?? true;

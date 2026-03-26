@@ -4,6 +4,7 @@ namespace JayAnta\AiGuard;
 
 use Illuminate\Support\ServiceProvider;
 use JayAnta\AiGuard\AiGuardManager;
+use JayAnta\AiGuard\Console\Commands\AiGuardRobotsTxt;
 use JayAnta\AiGuard\Console\Commands\AiGuardStats;
 use JayAnta\AiGuard\Services\AiDetector;
 use JayAnta\AiGuard\Services\HoneypotService;
@@ -54,6 +55,7 @@ class AiGuardServiceProvider extends ServiceProvider
         if ($this->app->runningInConsole()) {
             $this->commands([
                 AiGuardStats::class,
+                AiGuardRobotsTxt::class,
             ]);
         }
     }

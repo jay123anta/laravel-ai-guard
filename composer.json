@@ -11,7 +11,15 @@
         "bot-detection",
         "prompt-injection",
         "middleware",
-        "threat-detection"
+        "threat-detection",
+        "waf",
+        "gptbot",
+        "claudebot",
+        "llm-security",
+        "web-scraping",
+        "honeypot",
+        "pii-detection",
+        "firewall"
     ],
     "homepage": "https://github.com/jay123anta/laravel-ai-guard",
     "authors": [

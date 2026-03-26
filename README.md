@@ -387,12 +387,39 @@ All endpoints are prefixed with your configured prefix (default: `/ai-guard`).
 | threat_type | — | Filter: `ai_crawler`, `prompt_injection`, `data_harvester`, `honeypot_trap`, `pii_leak`, `bad_bot`, `scraper`, `seo_bot` |
 | action_taken | — | Filter: `logged`, `blocked`, `rate_limited` |
 
-## Artisan Command
+## Artisan Commands
+
+### Threat Statistics
 
 ```bash
 php artisan ai-guard:stats
 php artisan ai-guard:stats --hours=48
 ```
+
+### Generate robots.txt
+
+Generate a `robots.txt` that blocks AI crawlers and scrapers using the 354 bot signature database:
+
+```bash
+# Print to console (copy-paste ready)
+php artisan ai-guard:robots-txt
+
+# Save directly to public/robots.txt
+php artisan ai-guard:robots-txt --output=public/robots.txt
+
+# Block ALL categories (317 bots) — excludes search engines
+php artisan ai-guard:robots-txt --all
+
+# Block specific categories only
+php artisan ai-guard:robots-txt --categories=ai_training,bad_bots,scrapers
+
+# Append to existing robots.txt
+php artisan ai-guard:robots-txt --output=public/robots.txt --append
+```
+
+Default: blocks AI training bots + AI assistants (107 bots). Explicitly allows Googlebot and Bingbot.
+
+> **Tip:** Even without installing the full middleware, this command gives you a production-ready robots.txt that stays current with the latest AI bots.
 
 ## Detection Details
 

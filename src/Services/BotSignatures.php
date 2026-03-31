@@ -232,6 +232,18 @@ class BotSignatures
                     'EmailWolf',                   // Email harvesting scraper
                     'ExtractorPro',                // Web data extraction tool
                     'Xaldon WebSpider',            // Web spider tool
+                    // --- Scraping-as-a-Service platforms ---
+                    'ZenRows',                     // ZenRows scraping API
+                    'ScrapingBee',                 // ScrapingBee scraping API
+                    'ScraperAPI',                  // ScraperAPI proxy scraping
+                    'Oxylabs',                     // Oxylabs scraping API
+                    'Crawlbase',                   // Crawlbase scraping API
+                    'WebScrapingAPI',              // WebScrapingAPI service
+                    'ProxyCrawl',                  // ProxyCrawl (now Crawlbase)
+                    'ScrapFly',                    // ScrapFly scraping API
+                    'ScrapeOps',                   // ScrapeOps proxy scraping
+                    'Zyte',                        // Zyte (formerly Scrapinghub)
+                    'AutoScraper',                 // AutoScraper Python library
                 ],
             ],
 

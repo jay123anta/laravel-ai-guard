@@ -112,7 +112,8 @@ class PromptInjectionDetector
             'repeat (everything|all|your|the) (above|before|prior|previous)',
 
             // DAN and jailbreak patterns
-            '\bDAN\b',
+            // Uppercase-only — patterns run with /i, but "dan" is a common name
+            '(?-i:\bDAN\b)',
             'do anything now',
             'jailbreak',
             'bypass (your|all|the|safety|content)',
@@ -156,10 +157,12 @@ class PromptInjectionDetector
     {
         $maxLength = $this->config['logging']['max_payload_length'] ?? 500;
 
-        if (strlen($value) <= $maxLength) {
+        if (mb_strlen($value) <= $maxLength) {
             return $value;
         }
 
-        return substr($value, 0, $maxLength) . '...';
+        // mb_substr — a byte-based cut can split a multibyte character and
+        // produce invalid UTF-8, which breaks json_encode on API responses
+        return mb_substr($value, 0, $maxLength) . '...';
     }
 }

@@ -16,8 +16,8 @@ if (config('ai-guard.api.enabled', true)) {
         Route::get('/api/timeline', 'timeline');
         Route::get('/api/confidence-breakdown', 'confidenceBreakdown');
         Route::get('/api/detector-info', 'detectorInfo');
-        Route::get('/api/threats/{id}', 'show');
-        Route::post('/api/threats/{id}/false-positive', 'markFalsePositive');
+        Route::get('/api/threats/{id}', 'show')->whereNumber('id');
+        Route::post('/api/threats/{id}/false-positive', 'markFalsePositive')->whereNumber('id');
         Route::delete('/api/flush', 'flush');
     });
 }

@@ -21,7 +21,7 @@ class MlDetector
         }
 
         $score = $regexResult['confidence_score'];
-        $triggerRange = $this->config['ml_detection']['trigger_range'] ?? [40, 85];
+        $triggerRange = $this->config['ml_detection']['trigger_range'] ?? [40, 90];
 
         // Only run ML for borderline scores — too low or already confident = skip ML
         if ($score < $triggerRange[0] || $score > $triggerRange[1]) {
@@ -77,7 +77,7 @@ class MlDetector
         return [
             'ml_enabled' => $this->isEnabled(),
             'ml_driver' => $this->getDriverName(),
-            'ml_trigger_range' => $this->config['ml_detection']['trigger_range'] ?? [40, 85],
+            'ml_trigger_range' => $this->config['ml_detection']['trigger_range'] ?? [40, 90],
         ];
     }
 

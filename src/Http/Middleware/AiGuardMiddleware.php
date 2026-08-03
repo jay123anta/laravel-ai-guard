@@ -103,10 +103,11 @@ class AiGuardMiddleware
         $threatResult = $this->pickHighestThreat($allResults);
 
         if ($threatResult['detected']) {
-            $this->logThreat($request, $threatResult, $config);
-            $this->sendAlertIfNeeded($threatResult, $config);
+            $actionTaken = $this->determineAction($threatResult, $config);
+            $this->logThreat($request, $threatResult, $config, $actionTaken);
+            $this->sendAlertIfNeeded($threatResult, $config, $actionTaken);
 
-            $action = $this->takeAction($request, $next, $threatResult, $config);
+            $action = $this->takeAction($request, $next, $threatResult, $config, $actionTaken);
 
             // Scan response for PII leaks even on threat requests
             return $this->scanResponse($request, $action, $config);
@@ -128,12 +129,12 @@ class AiGuardMiddleware
             $scanResult = $this->responseScanner->scan($response);
 
             if ($scanResult['detected']) {
-                $this->logThreat($request, $scanResult, $config);
-                $this->sendAlertIfNeeded($scanResult, $config);
+                $actionTaken = $this->determineAction($scanResult, $config);
+                $this->logThreat($request, $scanResult, $config, $actionTaken);
+                $this->sendAlertIfNeeded($scanResult, $config, $actionTaken);
 
                 // In block mode, strip the response and return a warning
-                $mode = $config['mode'] ?? 'log_only';
-                if ($mode === 'block') {
+                if ($actionTaken === 'blocked') {
                     return response()->json([
                         'error' => 'Response blocked',
                         'message' => 'PII detected in response by AI Guard',
@@ -171,13 +172,26 @@ class AiGuardMiddleware
         return $best;
     }
 
-    private function takeAction(Request $request, Closure $next, array $result, array $config): mixed
+    private function determineAction(array $result, array $config): string
     {
         $mode = $config['mode'] ?? 'log_only';
         $threshold = $config['confidence_threshold'] ?? 70;
         $score = $result['confidence_score'];
 
         if ($mode === 'block' && $score >= $threshold) {
+            return 'blocked';
+        }
+
+        if ($mode === 'rate_limit' && $score >= $threshold) {
+            return 'rate_limited';
+        }
+
+        return 'logged';
+    }
+
+    private function takeAction(Request $request, Closure $next, array $result, array $config, string $actionTaken): mixed
+    {
+        if ($actionTaken === 'blocked') {
             return response()->json([
                 'error' => 'Access denied',
                 'message' => 'Request blocked by AI Guard',
@@ -185,7 +199,7 @@ class AiGuardMiddleware
             ], 403);
         }
 
-        if ($mode === 'rate_limit' && $score >= $threshold) {
+        if ($actionTaken === 'rate_limited') {
             try {
                 $key = 'ai-guard:' . $request->ip() . ':' . substr(md5($request->userAgent() ?? ''), 0, 8);
                 $maxAttempts = $config['rate_limiting']['max_attempts'] ?? 60;
@@ -210,23 +224,16 @@ class AiGuardMiddleware
         return $next($request);
     }
 
-    private function logThreat(Request $request, array $result, array $config): void
+    private function logThreat(Request $request, array $result, array $config, string $actionTaken): void
     {
         try {
-            $mode = $config['mode'] ?? 'log_only';
-            $threshold = $config['confidence_threshold'] ?? 70;
-            $score = $result['confidence_score'];
+            $loggingConfig = $config['logging'] ?? [];
 
-            if ($mode === 'block' && $score >= $threshold) {
-                $actionTaken = 'blocked';
-            } elseif ($mode === 'rate_limit' && $score >= $threshold) {
-                $actionTaken = 'rate_limited';
-            } else {
-                $actionTaken = 'logged';
+            if (!($loggingConfig['enabled'] ?? true)) {
+                return;
             }
 
             $headersSnapshot = null;
-            $loggingConfig = $config['logging'] ?? [];
             if ($loggingConfig['log_headers'] ?? true) {
                 $headersSnapshot = [
                     'User-Agent' => $request->header('User-Agent'),
@@ -250,7 +257,7 @@ class AiGuardMiddleware
                 'request_method' => $request->method(),
                 'matched_pattern' => $result['matched_pattern'],
                 'payload_snippet' => isset($result['payload_snippet'])
-                    ? substr($result['payload_snippet'], 0, $loggingConfig['max_payload_length'] ?? 500)
+                    ? mb_substr($result['payload_snippet'], 0, $loggingConfig['max_payload_length'] ?? 500)
                     : null,
                 'headers_snapshot' => $headersSnapshot,
                 'action_taken' => $actionTaken,
@@ -264,7 +271,7 @@ class AiGuardMiddleware
         }
     }
 
-    private function sendAlertIfNeeded(array $result, array $config): void
+    private function sendAlertIfNeeded(array $result, array $config, string $actionTaken): void
     {
         try {
             $alertsConfig = $config['alerts'] ?? [];
@@ -278,6 +285,23 @@ class AiGuardMiddleware
 
             if ($result['confidence_score'] < $threshold) {
                 return;
+            }
+
+            $alertOn = $alertsConfig['alert_on'] ?? null;
+            if (is_array($alertOn) && $alertOn !== []) {
+                // Accept legacy config values ('block', 'rate_limit') alongside action_taken values
+                $normalized = array_map(
+                    fn ($action) => match ($action) {
+                        'block' => 'blocked',
+                        'rate_limit' => 'rate_limited',
+                        default => $action,
+                    },
+                    $alertOn
+                );
+
+                if (!in_array($actionTaken, $normalized, true)) {
+                    return;
+                }
             }
 
             $payload = [

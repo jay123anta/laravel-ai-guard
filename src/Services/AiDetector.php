@@ -9,14 +9,12 @@ class AiDetector
     private array $config;
     private array $crawlerPatterns;
     private array $harvesterPatterns;
-    private array $enabledCategories;
 
     public function __construct(array $config)
     {
         $this->config = $config;
         $this->crawlerPatterns = $config['ai_crawlers']['user_agents'] ?? [];
         $this->harvesterPatterns = $config['data_harvesters']['generic_user_agents'] ?? [];
-        $this->enabledCategories = $config['bot_signatures']['enabled_categories'] ?? [];
     }
 
     public function detect(Request $request): array

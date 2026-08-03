@@ -120,8 +120,9 @@ return [
         // Only alert on confidence scores above this value
         'alert_threshold' => 90,
 
-        // Which action_taken values trigger an alert
-        'alert_on' => ['block', 'rate_limited'],
+        // Which action_taken values trigger an alert ('logged', 'blocked', 'rate_limited')
+        // Remove 'logged' to only alert when a request was actually blocked/rate limited
+        'alert_on' => ['logged', 'blocked', 'rate_limited'],
     ],
 
     // Dashboard settings
@@ -235,7 +236,8 @@ return [
 
         // Only call ML when regex confidence is within this range
         // Below min = too low to bother, above max = regex is confident enough
-        'trigger_range' => [40, 85],
+        // Note: regex detections score 90, so the max must be >= 90 for ML to run
+        'trigger_range' => [40, 90],
 
         // Score weighting: regex_weight + ml_weight = 1.0
         'regex_weight' => 0.4,

@@ -625,6 +625,27 @@ class AiGuardMiddlewareTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // Full Cycle: Logging Disabled → Detection Still Works, Nothing Logged
+    // -------------------------------------------------------------------------
+
+    public function test_full_cycle_logging_disabled_still_blocks_but_does_not_log(): void
+    {
+        config()->set('ai-guard.mode', 'block');
+        config()->set('ai-guard.logging.enabled', false);
+        $this->rebindDetectors();
+
+        $response = $this->withHeaders([
+            'User-Agent' => 'GPTBot/1.0',
+        ])->get('/test-ai-guard');
+
+        // Still blocked — detection is independent of logging
+        $response->assertStatus(403);
+
+        // But nothing written to the database
+        $this->assertDatabaseCount('ai_threat_logs', 0);
+    }
+
+    // -------------------------------------------------------------------------
     // Full Cycle: Payload Snippet Truncation
     // -------------------------------------------------------------------------
 

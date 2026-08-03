@@ -105,7 +105,9 @@ class ResponseScanner
             'phone' => [
                 'label' => 'Phone Number',
                 'severity' => 75,
-                'regex' => '/(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/',
+                // Requires a separator before the last group so bare 10-digit
+                // numbers (IDs, timestamps) don't match
+                'regex' => '/(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]\d{4}\b/',
             ],
             'credit_card' => [
                 'label' => 'Credit Card Number',
@@ -115,7 +117,9 @@ class ResponseScanner
             'ssn' => [
                 'label' => 'Social Security Number',
                 'severity' => 95,
-                'regex' => '/\b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b/',
+                // Separators are mandatory — an unseparated 9-digit run matches
+                // far too many non-SSN values
+                'regex' => '/\b\d{3}[-.\s]\d{2}[-.\s]\d{4}\b/',
             ],
             'api_key' => [
                 'label' => 'API Key',

@@ -258,7 +258,9 @@ class BotSignatures
                     'OpenVAS', 'Burp', 'dirbuster',
                     'gobuster', 'wpscan', 'Jorgee',
                     'Morfeus', 'Zgrab', 'masscan',
-                    'nuclei', 'httpx', 'subfinder',
+                    // 'httpx' deliberately not listed here: it would also match the
+                    // legitimate python-httpx client library (data_harvesters, 80)
+                    'nuclei', 'subfinder',
                     'jaeles', 'OWASP', 'Arachni',
                     'Skipfish', 'Wapiti', 'Vega',
                     'AppScan', 'NetSparker',

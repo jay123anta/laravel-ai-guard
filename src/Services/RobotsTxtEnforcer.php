@@ -58,26 +58,28 @@ class RobotsTxtEnforcer
     {
         $robotsContent = $this->getRobotsContent();
 
-        if ($robotsContent === null) {
+        if ($robotsContent === '') {
             return [];
         }
 
         return $this->parseDisallowRules($robotsContent, $botName);
     }
 
-    private function getRobotsContent(): ?string
+    private function getRobotsContent(): string
     {
         $cacheMinutes = $this->config['robots_txt']['cache_minutes'] ?? 60;
 
+        // A missing file is cached as '' — Cache::remember does not store null,
+        // which would re-read the filesystem on every request
         return Cache::remember('ai-guard:robots-txt', $cacheMinutes * 60, function () {
             $robotsPath = public_path('robots.txt');
 
             if (!file_exists($robotsPath)) {
-                return null;
+                return '';
             }
 
             $content = file_get_contents($robotsPath);
-            return $content !== false ? $content : null;
+            return $content !== false ? $content : '';
         });
     }
 
@@ -85,7 +87,6 @@ class RobotsTxtEnforcer
     {
         $lines = explode("\n", $content);
         $disallowed = [];
-        $currentAgent = null;
         $isRelevantAgent = false;
 
         foreach ($lines as $line) {
@@ -97,7 +98,6 @@ class RobotsTxtEnforcer
 
             if (stripos($line, 'User-agent:') === 0) {
                 $agent = trim(substr($line, 11));
-                $currentAgent = $agent;
                 $isRelevantAgent = ($agent === '*');
 
                 if ($botName !== null && stripos($agent, $botName) !== false) {

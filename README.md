@@ -13,7 +13,7 @@ Protect your Laravel app from AI scrapers, LLM crawlers, and prompt injection at
 
 Laravel AI Guard is a middleware-based security package with a multi-layer detection pipeline:
 
-- **365 bot signatures** across 7 categories (AI training, AI assistants, SEO tools, scrapers, bad bots, data harvesters, search engines) with per-category confidence scoring
+- **364 bot signatures** across 7 categories (AI training, AI assistants, SEO tools, scrapers, bad bots, data harvesters, search engines) with per-category confidence scoring
 - **30 prompt injection patterns** across 7 attack categories, with recursive nested input scanning
 - **Honeypot trap routes** — hidden paths that real users never visit, instant 100 confidence on hit
 - **PII leak detection** — scans outgoing responses for emails, credit cards, SSNs, API keys, JWTs, AWS keys, private keys, and database URLs
@@ -100,7 +100,7 @@ Every request passes through this pipeline:
 Request
   1. Whitelist check         → skip if IP/UA whitelisted
   2. Honeypot trap check     → instant 100 confidence
-  3. Bot signature detection → 365 bots, 7 categories
+  3. Bot signature detection → 364 bots, 7 categories
      a. robots.txt check     → boost confidence if Disallow violated
   4. Prompt injection scan   → 30 patterns, recursive input scanning
      a. ML enhancement       → optional, borderline cases only
@@ -131,7 +131,7 @@ After publishing, the config file is at `config/ai-guard.php`.
 'confidence_threshold' => 70,
 ```
 
-### Bot Signatures (365 bots, 7 categories)
+### Bot Signatures (364 bots, 7 categories)
 
 ```php
 'bot_signatures' => [
@@ -147,7 +147,7 @@ After publishing, the config file is at `config/ai-guard.php`.
 | `ai_assistants` | 44 | 90 | Yes |
 | `seo_tools` | 58 | 60 | Yes |
 | `scrapers` | 58 | 85 | Yes |
-| `bad_bots` | 59 | 95 | Yes |
+| `bad_bots` | 58 | 95 | Yes |
 | `data_harvesters` | 46 | 80 | Yes |
 | `search_engines` | 37 | 30 | No (disabled) |
 
@@ -238,7 +238,7 @@ Analyzes 5 signals: missing browser headers, alphabetical header order, anomalou
 'ml_detection' => [
     'enabled' => false,           // Off by default — package stays lightweight
     'driver' => 'lakera',         // lakera, huggingface, pangea, llm_guard, ollama, custom
-    'trigger_range' => [40, 85],  // Only call ML for borderline regex scores
+    'trigger_range' => [40, 90],  // Only call ML for regex scores in this range
     'regex_weight' => 0.4,        // Combined score: regex 40% + ML 60%
 ],
 ```
@@ -286,7 +286,7 @@ AI_GUARD_LAKERA_KEY=your-key-here
 'alerts' => [
     'slack_webhook' => null,                  // Your Slack webhook URL
     'alert_threshold' => 90,                  // Only alert above this score
-    'alert_on' => ['block', 'rate_limited'],  // Which actions trigger alerts
+    'alert_on' => ['logged', 'blocked', 'rate_limited'],  // Which actions trigger alerts
 ],
 ```
 
@@ -398,7 +398,7 @@ php artisan ai-guard:stats --hours=48
 
 ### Generate robots.txt
 
-Generate a `robots.txt` that blocks AI crawlers and scrapers using the 365 bot signature database:
+Generate a `robots.txt` that blocks AI crawlers and scrapers using the 364 bot signature database:
 
 ```bash
 # Print to console (copy-paste ready)
@@ -423,7 +423,7 @@ Default: blocks AI training bots + AI assistants (107 bots). Explicitly allows G
 
 ## Detection Details
 
-### Bot Signatures (365 bots in 7 categories)
+### Bot Signatures (364 bots in 7 categories)
 
 **AI Training Bots** (63 bots, confidence: 95) — GPTBot, ChatGPT-User, ClaudeBot, CCBot, Bytespider, Diffbot, DeepSeekBot, TikTokSpider, Google-CloudVertexBot, cohere-training-data-crawler, and more.
 
@@ -625,7 +625,7 @@ The test suite includes 53 full-cycle tests with 492 assertions:
 
 ### 2.0.0
 
-- 365 curated bot signatures across 7 categories with per-category confidence scoring
+- 364 curated bot signatures across 7 categories with per-category confidence scoring
 - Honeypot trap routes (30 default paths, instant 100 confidence)
 - PII leak detection — scans outgoing responses for 10 sensitive data patterns
 - robots.txt enforcement — boosts confidence when bots violate Disallow rules

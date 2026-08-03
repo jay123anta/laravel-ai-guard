@@ -26,6 +26,16 @@ class AiGuardManager
 
     public function detect(Request $request): array
     {
+        if (!$this->isEnabled() || $this->aiDetector->isWhitelisted($request)) {
+            return [
+                'detected' => false,
+                'threat_type' => null,
+                'threat_source' => null,
+                'confidence_score' => 0,
+                'matched_pattern' => null,
+            ];
+        }
+
         $aiResult = $this->aiDetector->detect($request);
         $injectionResult = $this->promptDetector->detect($request);
 

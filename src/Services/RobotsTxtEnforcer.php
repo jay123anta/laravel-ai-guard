@@ -16,7 +16,7 @@ class RobotsTxtEnforcer
 
     public function check(Request $request, ?array $botInfo): array
     {
-        if (!($this->config['robots_txt']['enabled'] ?? false)) {
+        if (! ($this->config['robots_txt']['enabled'] ?? false)) {
             return $this->buildEmptyResult();
         }
 
@@ -30,7 +30,7 @@ class RobotsTxtEnforcer
             return $this->buildEmptyResult();
         }
 
-        $requestPath = '/' . ltrim($request->path(), '/');
+        $requestPath = '/'.ltrim($request->path(), '/');
 
         foreach ($disallowedPaths as $disallowed) {
             if ($this->pathMatches($requestPath, $disallowed)) {
@@ -74,11 +74,12 @@ class RobotsTxtEnforcer
         return Cache::remember('ai-guard:robots-txt', $cacheMinutes * 60, function () {
             $robotsPath = public_path('robots.txt');
 
-            if (!file_exists($robotsPath)) {
+            if (! file_exists($robotsPath)) {
                 return '';
             }
 
             $content = file_get_contents($robotsPath);
+
             return $content !== false ? $content : '';
         });
     }
@@ -103,6 +104,7 @@ class RobotsTxtEnforcer
                 if ($botName !== null && stripos($agent, $botName) !== false) {
                     $isRelevantAgent = true;
                 }
+
                 continue;
             }
 
@@ -125,6 +127,7 @@ class RobotsTxtEnforcer
 
         if (str_ends_with($disallowedPath, '*')) {
             $prefix = rtrim($disallowedPath, '*');
+
             return str_starts_with($requestPath, $prefix);
         }
 

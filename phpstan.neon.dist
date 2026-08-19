@@ -1,0 +1,13 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+
+parameters:
+    level: 6
+    paths:
+        - src
+        - config
+        - database
+        - routes
+    ignoreErrors:
+        # Detection results and config are passed as plain arrays by design
+        - identifier: missingType.iterableValue

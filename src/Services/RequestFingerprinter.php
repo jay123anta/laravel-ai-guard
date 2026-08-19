@@ -22,7 +22,7 @@ class RequestFingerprinter
 
     public function analyze(Request $request): array
     {
-        if (!($this->config['fingerprinting']['enabled'] ?? false)) {
+        if (! ($this->config['fingerprinting']['enabled'] ?? false)) {
             return $this->buildEmptyResult();
         }
 
@@ -100,6 +100,7 @@ class RequestFingerprinter
                 $missing++;
             }
         }
+
         return $missing;
     }
 

@@ -351,6 +351,7 @@ class BotSignatures
         foreach (self::getCategories() as $category) {
             $total += count($category['bots']);
         }
+
         return $total;
     }
 
@@ -373,6 +374,7 @@ class BotSignatures
                 }
             }
         }
+
         return null;
     }
 }

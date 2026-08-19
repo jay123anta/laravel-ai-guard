@@ -10,12 +10,15 @@ use JayAnta\AiGuard\Models\AiThreatLog;
 class AiGuardApiController extends Controller
 {
     private const MAX_LIMIT = 200;
+
     private const MAX_HOURS = 8760; // 1 year
+
     private const ALLOWED_THREAT_TYPES = [
         'ai_crawler', 'prompt_injection', 'data_harvester', 'api_abuser',
         'honeypot_trap', 'pii_leak', 'robots_txt_violation', 'suspicious_fingerprint',
         'seo_bot', 'scraper', 'bad_bot', 'search_engine',
     ];
+
     private const ALLOWED_ACTIONS = ['logged', 'blocked', 'rate_limited'];
 
     public function index(Request $request): JsonResponse

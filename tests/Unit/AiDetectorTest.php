@@ -9,6 +9,7 @@ use PHPUnit\Framework\TestCase;
 class AiDetectorTest extends TestCase
 {
     private array $config;
+
     private AiDetector $detector;
 
     protected function setUp(): void

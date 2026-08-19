@@ -7,6 +7,25 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * @property int $id
+ * @property string|null $ip_address
+ * @property string|null $user_agent
+ * @property string|null $threat_type
+ * @property string|null $threat_source
+ * @property int $confidence_score
+ * @property string|null $request_url
+ * @property string|null $request_method
+ * @property string|null $matched_pattern
+ * @property string|null $payload_snippet
+ * @property array|null $headers_snapshot
+ * @property string|null $action_taken
+ * @property bool $is_false_positive
+ * @property string|null $country_code
+ * @property \Illuminate\Support\Carbon|null $created_at
+ * @property \Illuminate\Support\Carbon|null $updated_at
+ * @property-read int|null $total Aggregate alias from getTopIps()/getTopSources()/getTimeline()
+ */
 class AiThreatLog extends Model
 {
     protected $table = 'ai_threat_logs';
@@ -39,46 +58,82 @@ class AiThreatLog extends Model
     // Query Scopes
     // -------------------------------------------------------------------------
 
+    /**
+     * @param  Builder<AiThreatLog>  $query
+     * @return Builder<AiThreatLog>
+     */
     public function scopeAiCrawlers(Builder $query): Builder
     {
         return $query->where('threat_type', 'ai_crawler');
     }
 
+    /**
+     * @param  Builder<AiThreatLog>  $query
+     * @return Builder<AiThreatLog>
+     */
     public function scopePromptInjections(Builder $query): Builder
     {
         return $query->where('threat_type', 'prompt_injection');
     }
 
+    /**
+     * @param  Builder<AiThreatLog>  $query
+     * @return Builder<AiThreatLog>
+     */
     public function scopeDataHarvesters(Builder $query): Builder
     {
         return $query->where('threat_type', 'data_harvester');
     }
 
+    /**
+     * @param  Builder<AiThreatLog>  $query
+     * @return Builder<AiThreatLog>
+     */
     public function scopeBlocked(Builder $query): Builder
     {
         return $query->where('action_taken', 'blocked');
     }
 
+    /**
+     * @param  Builder<AiThreatLog>  $query
+     * @return Builder<AiThreatLog>
+     */
     public function scopeRateLimited(Builder $query): Builder
     {
         return $query->where('action_taken', 'rate_limited');
     }
 
+    /**
+     * @param  Builder<AiThreatLog>  $query
+     * @return Builder<AiThreatLog>
+     */
     public function scopeHighConfidence(Builder $query, int $threshold = 70): Builder
     {
         return $query->where('confidence_score', '>=', $threshold);
     }
 
+    /**
+     * @param  Builder<AiThreatLog>  $query
+     * @return Builder<AiThreatLog>
+     */
     public function scopeRecent(Builder $query, int $hours = 24): Builder
     {
         return $query->where('created_at', '>=', now()->subHours($hours));
     }
 
+    /**
+     * @param  Builder<AiThreatLog>  $query
+     * @return Builder<AiThreatLog>
+     */
     public function scopeByIp(Builder $query, string $ip): Builder
     {
         return $query->where('ip_address', $ip);
     }
 
+    /**
+     * @param  Builder<AiThreatLog>  $query
+     * @return Builder<AiThreatLog>
+     */
     public function scopeNotFalsePositive(Builder $query): Builder
     {
         return $query->where('is_false_positive', false);
@@ -106,6 +161,9 @@ class AiThreatLog extends Model
         ];
     }
 
+    /**
+     * @return Collection<int, AiThreatLog>
+     */
     public static function getTopIps(int $limit = 10, int $hours = 24): Collection
     {
         return static::where('created_at', '>=', now()->subHours($hours))
@@ -116,6 +174,9 @@ class AiThreatLog extends Model
             ->get();
     }
 
+    /**
+     * @return Collection<int, AiThreatLog>
+     */
     public static function getTopSources(int $limit = 10, int $hours = 24): Collection
     {
         return static::where('created_at', '>=', now()->subHours($hours))
@@ -126,6 +187,9 @@ class AiThreatLog extends Model
             ->get();
     }
 
+    /**
+     * @return Collection<int, AiThreatLog>
+     */
     public static function getTimeline(int $hours = 24): Collection
     {
         $driver = DB::getDriverName();
@@ -203,21 +267,37 @@ class AiThreatLog extends Model
     // v2 Scopes
     // -------------------------------------------------------------------------
 
+    /**
+     * @param  Builder<AiThreatLog>  $query
+     * @return Builder<AiThreatLog>
+     */
     public function scopeHoneypotTraps(Builder $query): Builder
     {
         return $query->where('threat_type', 'honeypot_trap');
     }
 
+    /**
+     * @param  Builder<AiThreatLog>  $query
+     * @return Builder<AiThreatLog>
+     */
     public function scopePiiLeaks(Builder $query): Builder
     {
         return $query->where('threat_type', 'pii_leak');
     }
 
+    /**
+     * @param  Builder<AiThreatLog>  $query
+     * @return Builder<AiThreatLog>
+     */
     public function scopeBadBots(Builder $query): Builder
     {
         return $query->where('threat_type', 'bad_bot');
     }
 
+    /**
+     * @param  Builder<AiThreatLog>  $query
+     * @return Builder<AiThreatLog>
+     */
     public function scopeScrapers(Builder $query): Builder
     {
         return $query->where('threat_type', 'scraper');

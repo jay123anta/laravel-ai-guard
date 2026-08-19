@@ -2,10 +2,11 @@
 
 namespace JayAnta\AiGuard;
 
+use Illuminate\Routing\Router;
 use Illuminate\Support\ServiceProvider;
-use JayAnta\AiGuard\AiGuardManager;
 use JayAnta\AiGuard\Console\Commands\AiGuardRobotsTxt;
 use JayAnta\AiGuard\Console\Commands\AiGuardStats;
+use JayAnta\AiGuard\Http\Middleware\AiGuardMiddleware;
 use JayAnta\AiGuard\Services\AiDetector;
 use JayAnta\AiGuard\Services\HoneypotService;
 use JayAnta\AiGuard\Services\MlDetector;
@@ -20,7 +21,7 @@ class AiGuardServiceProvider extends ServiceProvider
     {
         $this->mergeConfigFrom(__DIR__.'/../config/ai-guard.php', 'ai-guard');
 
-        $this->app->singleton('ai-guard', fn ($app) => new AiGuardManager($app));
+        $this->app->singleton('ai-guard', fn () => new AiGuardManager);
 
         $this->app->singleton(AiDetector::class, fn ($app) => new AiDetector(config('ai-guard') ?? []));
 
@@ -39,6 +40,8 @@ class AiGuardServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        $this->app->make(Router::class)->aliasMiddleware('ai-guard', AiGuardMiddleware::class);
+
         $this->publishes([
             __DIR__.'/../config/ai-guard.php' => config_path('ai-guard.php'),
         ], 'ai-guard-config');

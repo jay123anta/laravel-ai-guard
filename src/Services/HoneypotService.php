@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 class HoneypotService
 {
     private array $config;
+
     private array $trapPaths;
 
     public function __construct(array $config)
@@ -17,11 +18,11 @@ class HoneypotService
 
     public function detect(Request $request): array
     {
-        if (!($this->config['honeypot']['enabled'] ?? false)) {
+        if (! ($this->config['honeypot']['enabled'] ?? false)) {
             return $this->buildEmptyResult();
         }
 
-        $path = '/' . ltrim($request->path(), '/');
+        $path = '/'.ltrim($request->path(), '/');
 
         foreach ($this->trapPaths as $trapPath) {
             if (strcasecmp($path, $trapPath) === 0) {

@@ -7,7 +7,9 @@ use Illuminate\Http\Request;
 class AiDetector
 {
     private array $config;
+
     private array $crawlerPatterns;
+
     private array $harvesterPatterns;
 
     public function __construct(array $config)
@@ -56,7 +58,7 @@ class AiDetector
 
     public function detectCategorizedBot(Request $request): array
     {
-        if (!($this->config['bot_signatures']['enabled'] ?? true)) {
+        if (! ($this->config['bot_signatures']['enabled'] ?? true)) {
             return $this->buildEmptyResult();
         }
 
@@ -79,13 +81,13 @@ class AiDetector
 
         // Respect feature-level toggles: if ai_crawlers is disabled, skip AI bot categories
         if (in_array($botInfo['category'], ['ai_training', 'ai_assistants'], true)
-            && !($this->config['ai_crawlers']['enabled'] ?? true)) {
+            && ! ($this->config['ai_crawlers']['enabled'] ?? true)) {
             return $this->buildEmptyResult();
         }
 
         // If data_harvesters is disabled, skip harvester category
         if ($botInfo['category'] === 'data_harvesters'
-            && !($this->config['data_harvesters']['enabled'] ?? true)) {
+            && ! ($this->config['data_harvesters']['enabled'] ?? true)) {
             return $this->buildEmptyResult();
         }
 
@@ -185,6 +187,7 @@ class AiDetector
     public function getBotInfo(Request $request): ?array
     {
         $userAgent = $request->userAgent() ?? '';
+
         return BotSignatures::findBot($userAgent);
     }
 

@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 class PromptInjectionDetector
 {
     private array $config;
+
     private array $patterns;
 
     public function __construct(array $config)
@@ -17,7 +18,7 @@ class PromptInjectionDetector
 
     public function detect(Request $request): array
     {
-        if (!($this->config['prompt_injection']['enabled'] ?? true)) {
+        if (! ($this->config['prompt_injection']['enabled'] ?? true)) {
             return $this->buildEmptyResult();
         }
 
@@ -28,7 +29,7 @@ class PromptInjectionDetector
         }
 
         if ($this->config['prompt_injection']['scan_query'] ?? false) {
-            $inputs = array_merge($inputs, $request->query() ?? []);
+            $inputs = array_merge($inputs, $request->query());
         }
 
         foreach ($inputs as $value) {
@@ -50,10 +51,11 @@ class PromptInjectionDetector
                     return $result;
                 }
             }
+
             return $this->buildEmptyResult();
         }
 
-        if (!is_string($value)) {
+        if (! is_string($value)) {
             return $this->buildEmptyResult();
         }
 
@@ -63,7 +65,7 @@ class PromptInjectionDetector
         }
 
         foreach ($this->patterns as $pattern) {
-            if (preg_match('/' . $pattern . '/i', $value)) {
+            if (preg_match('/'.$pattern.'/i', $value)) {
                 return [
                     'detected' => true,
                     'threat_type' => 'prompt_injection',
@@ -163,6 +165,6 @@ class PromptInjectionDetector
 
         // mb_substr — a byte-based cut can split a multibyte character and
         // produce invalid UTF-8, which breaks json_encode on API responses
-        return mb_substr($value, 0, $maxLength) . '...';
+        return mb_substr($value, 0, $maxLength).'...';
     }
 }

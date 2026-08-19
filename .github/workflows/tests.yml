@@ -36,11 +36,19 @@ jobs:
             laravel: '11.*'
             testbench: '9.*'
             composer-flags: '--no-blocking'
+          - php: '8.4'
+            laravel: '11.*'
+            testbench: '9.*'
+            composer-flags: '--no-blocking'
           - php: '8.2'
             laravel: '12.*'
             testbench: '10.*'
             composer-flags: ''
           - php: '8.3'
+            laravel: '12.*'
+            testbench: '10.*'
+            composer-flags: ''
+          - php: '8.4'
             laravel: '12.*'
             testbench: '10.*'
             composer-flags: ''
@@ -75,3 +83,45 @@ jobs:
 
       - name: Run tests
         run: vendor/bin/phpunit
+
+  static-analysis:
+    runs-on: ubuntu-latest
+    name: PHPStan
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          # PHP 8.1 resolves Laravel 10 + larastan 2.x, the verified analysis baseline
+          php-version: '8.1'
+          extensions: mbstring, pdo, pdo_sqlite, sqlite3
+          coverage: none
+
+      - name: Install dependencies
+        run: composer update --prefer-dist --no-interaction --no-blocking
+
+      - name: Run PHPStan
+        run: vendor/bin/phpstan analyse --no-progress --error-format=github
+
+  code-style:
+    runs-on: ubuntu-latest
+    name: Pint
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.1'
+          coverage: none
+
+      - name: Install dependencies
+        run: composer update --prefer-dist --no-interaction --no-blocking
+
+      - name: Run Pint
+        run: vendor/bin/pint --test

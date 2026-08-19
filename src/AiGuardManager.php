@@ -2,7 +2,6 @@
 
 namespace JayAnta\AiGuard;
 
-use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Http\Request;
 use JayAnta\AiGuard\Models\AiThreatLog;
 use JayAnta\AiGuard\Services\AiDetector;
@@ -11,14 +10,14 @@ use JayAnta\AiGuard\Services\PromptInjectionDetector;
 
 class AiGuardManager
 {
-    private Application $app;
     private array $config;
+
     private AiDetector $aiDetector;
+
     private PromptInjectionDetector $promptDetector;
 
-    public function __construct(Application $app)
+    public function __construct()
     {
-        $this->app = $app;
         $this->config = config('ai-guard') ?? [];
         $this->aiDetector = new AiDetector($this->config);
         $this->promptDetector = new PromptInjectionDetector($this->config);
@@ -26,7 +25,7 @@ class AiGuardManager
 
     public function detect(Request $request): array
     {
-        if (!$this->isEnabled() || $this->aiDetector->isWhitelisted($request)) {
+        if (! $this->isEnabled() || $this->aiDetector->isWhitelisted($request)) {
             return [
                 'detected' => false,
                 'threat_type' => null,
@@ -58,7 +57,7 @@ class AiGuardManager
 
     public function detectText(string $text): array
     {
-        if (!$this->isEnabled()) {
+        if (! $this->isEnabled()) {
             return [
                 'detected' => false,
                 'threat_type' => null,
@@ -87,11 +86,17 @@ class AiGuardManager
         return AiThreatLog::getThreatSummary($hours);
     }
 
+    /**
+     * @return \Illuminate\Support\Collection<int, AiThreatLog>
+     */
     public function getTopThreats(int $limit = 10): \Illuminate\Support\Collection
     {
         return AiThreatLog::getTopSources($limit);
     }
 
+    /**
+     * @return \Illuminate\Database\Eloquent\Collection<int, AiThreatLog>
+     */
     public function getRecentThreats(int $limit = 20): \Illuminate\Database\Eloquent\Collection
     {
         return AiThreatLog::recent(24)->notFalsePositive()

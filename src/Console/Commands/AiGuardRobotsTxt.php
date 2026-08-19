@@ -31,14 +31,14 @@ class AiGuardRobotsTxt extends Command
         $totalBots = 0;
 
         foreach ($categories as $categoryKey) {
-            if (!isset($allBots[$categoryKey])) {
+            if (! isset($allBots[$categoryKey])) {
                 continue;
             }
 
             $category = $allBots[$categoryKey];
-            $lines[] = '# ' . str_repeat('-', 60);
-            $lines[] = '# ' . $category['label'] . ' (' . count($category['bots']) . ' bots)';
-            $lines[] = '# ' . str_repeat('-', 60);
+            $lines[] = '# '.str_repeat('-', 60);
+            $lines[] = '# '.$category['label'].' ('.count($category['bots']).' bots)';
+            $lines[] = '# '.str_repeat('-', 60);
 
             foreach ($category['bots'] as $bot) {
                 // Clean bot name for robots.txt — remove trailing slashes and special chars
@@ -47,7 +47,7 @@ class AiGuardRobotsTxt extends Command
                     continue;
                 }
 
-                $lines[] = 'User-agent: ' . $botName;
+                $lines[] = 'User-agent: '.$botName;
                 $lines[] = 'Disallow: /';
                 $lines[] = '';
                 $totalBots++;
@@ -55,9 +55,9 @@ class AiGuardRobotsTxt extends Command
         }
 
         // Add a catch-all section for known patterns
-        $lines[] = '# ' . str_repeat('-', 60);
+        $lines[] = '# '.str_repeat('-', 60);
         $lines[] = '# Allow search engines (don\'t block these)';
-        $lines[] = '# ' . str_repeat('-', 60);
+        $lines[] = '# '.str_repeat('-', 60);
         $lines[] = 'User-agent: Googlebot';
         $lines[] = 'Allow: /';
         $lines[] = '';
@@ -67,11 +67,11 @@ class AiGuardRobotsTxt extends Command
         $lines[] = 'User-agent: *';
         $lines[] = 'Allow: /';
         $lines[] = '';
-        $lines[] = '# Generated: ' . now()->toDateTimeString();
-        $lines[] = '# Bots blocked: ' . $totalBots;
-        $lines[] = '# Categories: ' . implode(', ', $categories);
+        $lines[] = '# Generated: '.now()->toDateTimeString();
+        $lines[] = '# Bots blocked: '.$totalBots;
+        $lines[] = '# Categories: '.implode(', ', $categories);
 
-        $content = implode("\n", $lines) . "\n";
+        $content = implode("\n", $lines)."\n";
 
         // Output
         $outputPath = $this->option('output');
@@ -94,13 +94,14 @@ class AiGuardRobotsTxt extends Command
 
         if ($this->option('append') && file_exists($fullPath)) {
             $existing = file_get_contents($fullPath);
-            $content = $existing . "\n\n" . $content;
+            $content = $existing."\n\n".$content;
             file_put_contents($fullPath, $content);
             $this->info("Appended {$totalBots} bot rules to {$outputPath}");
         } else {
-            if (file_exists($fullPath) && !$this->option('append')) {
-                if (!$this->confirm("{$outputPath} already exists. Overwrite?")) {
+            if (file_exists($fullPath) && ! $this->option('append')) {
+                if (! $this->confirm("{$outputPath} already exists. Overwrite?")) {
                     $this->warn('Cancelled.');
+
                     return Command::SUCCESS;
                 }
             }

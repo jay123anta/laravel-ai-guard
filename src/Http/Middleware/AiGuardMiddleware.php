@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
+use JayAnta\AiGuard\Events\ThreatDetected;
 use JayAnta\AiGuard\Models\AiThreatLog;
 use JayAnta\AiGuard\Services\AiDetector;
 use JayAnta\AiGuard\Services\HoneypotService;
@@ -19,11 +20,17 @@ use JayAnta\AiGuard\Services\RobotsTxtEnforcer;
 class AiGuardMiddleware
 {
     private AiDetector $aiDetector;
+
     private PromptInjectionDetector $promptDetector;
+
     private HoneypotService $honeypot;
+
     private ResponseScanner $responseScanner;
+
     private RobotsTxtEnforcer $robotsEnforcer;
+
     private RequestFingerprinter $fingerprinter;
+
     private MlDetector $mlDetector;
 
     public function __construct(
@@ -48,7 +55,7 @@ class AiGuardMiddleware
     {
         $config = config('ai-guard') ?? [];
 
-        if (!($config['enabled'] ?? true)) {
+        if (! ($config['enabled'] ?? true)) {
             return $next($request);
         }
 
@@ -76,7 +83,7 @@ class AiGuardMiddleware
             $robotsResult = $this->robotsEnforcer->check($request, $botInfo);
             if ($robotsResult['detected']) {
                 $aiResult['confidence_score'] = min($aiResult['confidence_score'] + $robotsResult['confidence_score'], 100);
-                $aiResult['matched_pattern'] .= ' + ' . $robotsResult['matched_pattern'];
+                $aiResult['matched_pattern'] .= ' + '.$robotsResult['matched_pattern'];
                 $allResults[array_key_last($allResults)] = $aiResult;
             }
         }
@@ -105,6 +112,7 @@ class AiGuardMiddleware
         if ($threatResult['detected']) {
             $actionTaken = $this->determineAction($threatResult, $config);
             $this->logThreat($request, $threatResult, $config, $actionTaken);
+            $this->dispatchEvent($request, $threatResult, $actionTaken);
             $this->sendAlertIfNeeded($threatResult, $config, $actionTaken);
 
             $action = $this->takeAction($request, $next, $threatResult, $config, $actionTaken);
@@ -122,7 +130,7 @@ class AiGuardMiddleware
     private function scanResponse(Request $request, mixed $response, array $config): mixed
     {
         try {
-            if (!$this->responseScanner->isEnabled()) {
+            if (! $this->responseScanner->isEnabled()) {
                 return $response;
             }
 
@@ -131,6 +139,7 @@ class AiGuardMiddleware
             if ($scanResult['detected']) {
                 $actionTaken = $this->determineAction($scanResult, $config);
                 $this->logThreat($request, $scanResult, $config, $actionTaken);
+                $this->dispatchEvent($request, $scanResult, $actionTaken);
                 $this->sendAlertIfNeeded($scanResult, $config, $actionTaken);
 
                 // In block mode, strip the response and return a warning
@@ -201,7 +210,7 @@ class AiGuardMiddleware
 
         if ($actionTaken === 'rate_limited') {
             try {
-                $key = 'ai-guard:' . $request->ip() . ':' . substr(md5($request->userAgent() ?? ''), 0, 8);
+                $key = 'ai-guard:'.$request->ip().':'.substr(md5($request->userAgent() ?? ''), 0, 8);
                 $maxAttempts = $config['rate_limiting']['max_attempts'] ?? 60;
                 $decaySeconds = (($config['rate_limiting']['decay_minutes'] ?? 1)) * 60;
 
@@ -229,7 +238,7 @@ class AiGuardMiddleware
         try {
             $loggingConfig = $config['logging'] ?? [];
 
-            if (!($loggingConfig['enabled'] ?? true)) {
+            if (! ($loggingConfig['enabled'] ?? true)) {
                 return;
             }
 
@@ -271,6 +280,17 @@ class AiGuardMiddleware
         }
     }
 
+    private function dispatchEvent(Request $request, array $result, string $actionTaken): void
+    {
+        try {
+            ThreatDetected::dispatch($request, $result, $actionTaken);
+        } catch (\Throwable $e) {
+            Log::warning('AI Guard: ThreatDetected listener threw an exception.', [
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
     private function sendAlertIfNeeded(array $result, array $config, string $actionTaken): void
     {
         try {
@@ -299,7 +319,7 @@ class AiGuardMiddleware
                     $alertOn
                 );
 
-                if (!in_array($actionTaken, $normalized, true)) {
+                if (! in_array($actionTaken, $normalized, true)) {
                     return;
                 }
             }

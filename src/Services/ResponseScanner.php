@@ -7,6 +7,7 @@ use Symfony\Component\HttpFoundation\Response;
 class ResponseScanner
 {
     private array $config;
+
     private array $patterns;
 
     public function __construct(array $config)
@@ -17,12 +18,12 @@ class ResponseScanner
 
     public function scan(Response $response): array
     {
-        if (!($this->config['response_scanning']['enabled'] ?? false)) {
+        if (! ($this->config['response_scanning']['enabled'] ?? false)) {
             return $this->buildEmptyResult();
         }
 
         $contentType = $response->headers->get('Content-Type', '');
-        if (!$this->isScannable($contentType)) {
+        if (! $this->isScannable($contentType)) {
             return $this->buildEmptyResult();
         }
 
@@ -39,7 +40,7 @@ class ResponseScanner
         $leaks = [];
 
         foreach ($this->patterns as $key => $pattern) {
-            if (!($this->config['response_scanning']['scan_' . $key] ?? true)) {
+            if (! ($this->config['response_scanning']['scan_'.$key] ?? true)) {
                 continue;
             }
 
@@ -66,7 +67,7 @@ class ResponseScanner
             'threat_source' => 'response_scanner',
             'confidence_score' => min($highestSeverity, 100),
             'matched_pattern' => implode(', ', $leakTypes),
-            'payload_snippet' => 'PII detected: ' . implode(', ', array_column($leaks, 'label')),
+            'payload_snippet' => 'PII detected: '.implode(', ', array_column($leaks, 'label')),
             'leaks' => $leaks,
         ];
     }
@@ -160,7 +161,8 @@ class ResponseScanner
         if ($length <= 6) {
             return str_repeat('*', $length);
         }
-        return substr($value, 0, 3) . str_repeat('*', $length - 6) . substr($value, -3);
+
+        return substr($value, 0, 3).str_repeat('*', $length - 6).substr($value, -3);
     }
 
     private function buildEmptyResult(): array

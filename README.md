@@ -6,6 +6,8 @@
 [![Laravel Version](https://img.shields.io/badge/laravel-10.x%20%7C%2011.x%20%7C%2012.x-blue?style=flat-square)](https://packagist.org/packages/jayanta/laravel-ai-guard)
 [![License](https://img.shields.io/packagist/l/jayanta/laravel-ai-guard.svg?style=flat-square)](https://packagist.org/packages/jayanta/laravel-ai-guard)
 [![Tests](https://img.shields.io/github/actions/workflow/status/jay123anta/laravel-ai-guard/tests.yml?branch=main&label=tests&style=flat-square)](https://github.com/jay123anta/laravel-ai-guard/actions)
+[![PHPStan](https://img.shields.io/badge/PHPStan-level%206-brightgreen?style=flat-square)](https://github.com/jay123anta/laravel-ai-guard/actions)
+[![Code Style](https://img.shields.io/badge/code%20style-Laravel%20Pint-orange?style=flat-square)](https://github.com/jay123anta/laravel-ai-guard/actions)
 
 Protect your Laravel app from AI scrapers, LLM crawlers, and prompt injection attacks.
 
@@ -72,6 +74,17 @@ protected $middleware = [
 ```
 
 That's it. AI Guard is now monitoring all incoming requests in `log_only` mode.
+
+### Protecting specific routes only
+
+The package registers an `ai-guard` middleware alias, so you can guard individual routes or groups instead of every request:
+
+```php
+Route::middleware('ai-guard')->group(function () {
+    Route::get('/articles/{article}', [ArticleController::class, 'show']);
+    Route::post('/chat', [ChatController::class, 'send']);
+});
+```
 
 ### Recommended First Steps
 
@@ -340,6 +353,22 @@ For local development without authentication:
 ],
 ```
 
+## Events
+
+Every detection dispatches a `JayAnta\AiGuard\Events\ThreatDetected` event, so you can plug in your own notifications, IP banning, or metrics:
+
+```php
+use JayAnta\AiGuard\Events\ThreatDetected;
+
+Event::listen(function (ThreatDetected $event) {
+    $event->request;      // The Illuminate\Http\Request that triggered detection
+    $event->threat;       // ['threat_type' => ..., 'confidence_score' => ..., 'matched_pattern' => ...]
+    $event->actionTaken;  // 'logged', 'blocked', or 'rate_limited'
+});
+```
+
+Listener exceptions are caught and logged — a broken listener never breaks request handling.
+
 ## Dashboard
 
 After installation, visit your dashboard at:
@@ -347,8 +376,6 @@ After installation, visit your dashboard at:
 ```
 http://your-app.com/ai-guard
 ```
-
-![Dashboard](https://via.placeholder.com/800x400?text=AI+Guard+Dashboard)
 
 The dashboard shows:
 
@@ -610,44 +637,45 @@ AI Guard adds ~1ms per request in regex-only mode. If you notice slowness:
 - Ensure ML detection is disabled unless you need it
 - Check that your `ai_threat_logs` table has indexes (they're created by the migration)
 
+## How It Compares
+
+| | Laravel AI Guard | [crawler-detect](https://github.com/JayBizzle/Crawler-Detect) | [spatie/laravel-honeypot](https://github.com/spatie/laravel-honeypot) | Cloudflare Bot Management |
+|---|---|---|---|---|
+| AI/LLM crawler signatures | ✅ 364 bots, 7 categories | ⚠️ Generic crawler list | ❌ | ✅ |
+| Prompt injection detection | ✅ 30 patterns + optional ML | ❌ | ❌ | ❌ |
+| PII leak detection (outbound) | ✅ 10 patterns | ❌ | ❌ | ❌ |
+| Honeypot traps | ✅ Trap URLs | ❌ | ✅ Form fields | ❌ |
+| Threat dashboard + API | ✅ Built-in | ❌ | ❌ | ✅ SaaS |
+| Block / rate-limit modes | ✅ | ❌ Detection only | ✅ | ✅ |
+| Runs inside your app | ✅ | ✅ | ✅ | ❌ Proxy/DNS |
+| Cost | Free | Free | Free | Paid |
+
+crawler-detect answers "is this a bot?"; spatie/laravel-honeypot stops form spam; Cloudflare needs DNS-level adoption. AI Guard is the only one purpose-built for the AI-scraper and LLM-security threat model, entirely inside Laravel.
+
 ## Testing
 
 ```bash
-composer test
+composer test        # PHPUnit test suite
+composer analyse     # PHPStan (level 6, Larastan)
+composer format      # Laravel Pint
 ```
 
-The test suite includes 53 full-cycle tests with 492 assertions:
+The test suite includes 60 full-cycle tests with 508 assertions:
 
-- **Feature tests (18)** — Complete request -> middleware -> detection -> database logging -> model queries -> stats pipeline
-- **Unit tests (35)** — AiDetector and PromptInjectionDetector covering all 7 attack categories, confidence stacking, whitelist bypass, config toggles, recursive scanning, and edge cases
+- **Feature tests (23)** — Complete request -> middleware -> detection -> database logging -> events -> model queries -> stats pipeline
+- **Unit tests (37)** — AiDetector and PromptInjectionDetector covering all 7 attack categories, confidence stacking, whitelist bypass, config toggles, recursive scanning, and edge cases
 
 ## Changelog
 
-### 2.0.0
+See [CHANGELOG.md](CHANGELOG.md) for a full history of changes.
 
-- 364 curated bot signatures across 7 categories with per-category confidence scoring
-- Honeypot trap routes (30 default paths, instant 100 confidence)
-- PII leak detection — scans outgoing responses for 10 sensitive data patterns
-- robots.txt enforcement — boosts confidence when bots violate Disallow rules
-- Request fingerprinting — 5-signal analysis to detect bots faking browser UAs
-- Optional ML detection — 6 pluggable providers (Lakera, HuggingFace, Pangea, LLM Guard, Ollama, custom), zero dependencies
-- New threat types: honeypot_trap, pii_leak, bad_bot, scraper, seo_bot, suspicious_fingerprint
-- New query scopes: honeypotTraps(), piiLeaks(), badBots(), scrapers()
-- Expanded stats: honeypot_traps, pii_leaks, bad_bots, scrapers in getThreatSummary()
-- getFeatureStatus() facade method for full feature overview
+## Contributing
 
-### 1.0.0
+Contributions are welcome — new bot signatures and injection patterns especially. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
-- AI crawler detection (20+ bots)
-- Prompt injection detection (30 patterns across 7 categories)
-- Data harvester detection
-- Three operating modes: log_only, block, rate_limit
-- Dashboard with real-time stats and auto-refresh
-- 10 REST API endpoints
-- Artisan `ai-guard:stats` command
-- Slack webhook alerts for high-confidence threats
-- IP and user-agent whitelisting
-- Full test suite with CI matrix (PHP 8.1-8.3, Laravel 10-12)
+## Security
+
+If you discover a security vulnerability, please follow the [security policy](SECURITY.md) — do not open a public issue.
 
 ## Credits
 

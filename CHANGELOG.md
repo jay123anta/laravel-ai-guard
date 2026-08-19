@@ -5,6 +5,23 @@ All notable changes to `jayanta/laravel-ai-guard` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased](https://github.com/jay123anta/laravel-ai-guard/compare/v2.1.0...HEAD)
+
+### Added
+
+- `ThreatDetected` event dispatched on every detection (inbound threats and outbound PII leaks) with the request, the detection result, and the action taken — listener exceptions are caught so a broken listener never breaks request handling
+- `ai-guard` middleware alias registered automatically, enabling `Route::middleware('ai-guard')` for per-route protection
+- PHPStan (Larastan, level 6) static analysis: `composer analyse`, enforced in CI
+- Laravel Pint code style: `composer format`, enforced in CI
+- PHP 8.4 added to the CI test matrix (Laravel 11 and 12)
+- `SECURITY.md` vulnerability disclosure policy, `CONTRIBUTING.md`, GitHub issue templates (bug, detection gap / false positive, feature request), and Dependabot config
+- `.gitattributes` export-ignore rules — Composer dist downloads no longer include tests, CI config, or tooling files
+
+### Changed
+
+- `AiGuardManager::__construct()` no longer takes an `Application` argument (it was stored but never used). Only affects code instantiating the manager directly instead of via the container or `AiGuard` facade.
+- Codebase reformatted with Laravel Pint (`laravel` preset); PHPDoc generics added to model scopes and collection-returning methods
+
 ## [2.1.0](https://github.com/jay123anta/laravel-ai-guard/compare/v2.0.0...v2.1.0) — 2026-08-03
 
 ### Added

@@ -52,6 +52,14 @@ jobs:
             laravel: '12.*'
             testbench: '10.*'
             composer-flags: ''
+          - php: '8.3'
+            laravel: '13.*'
+            testbench: '11.*'
+            composer-flags: ''
+          - php: '8.4'
+            laravel: '13.*'
+            testbench: '11.*'
+            composer-flags: ''
 
     name: PHP ${{ matrix.php }} — Laravel ${{ matrix.laravel }}
 
@@ -84,6 +92,43 @@ jobs:
       - name: Run tests
         run: vendor/bin/phpunit
 
+  laravel-ai:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - php: '8.3'
+            laravel: '12.*'
+            testbench: '10.*'
+          - php: '8.4'
+            laravel: '13.*'
+            testbench: '11.*'
+
+    # The optional laravel/ai integration (agent middleware, guarded tools, MCP client tools)
+    name: laravel/ai — PHP ${{ matrix.php }}, Laravel ${{ matrix.laravel }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: mbstring, pdo, pdo_sqlite, sqlite3
+          coverage: none
+
+      - name: Install dependencies
+        run: |
+          composer require "laravel/framework:${{ matrix.laravel }}" "orchestra/testbench:${{ matrix.testbench }}" --no-interaction --no-update
+          composer require laravel/ai laravel/mcp --dev --no-interaction --no-update
+          composer update --prefer-dist --no-interaction
+
+      - name: Run tests
+        run: vendor/bin/phpunit
+
   static-analysis:
     runs-on: ubuntu-latest
     name: PHPStan
@@ -105,6 +150,32 @@ jobs:
 
       - name: Run PHPStan
         run: vendor/bin/phpstan analyse --no-progress --error-format=github
+
+  static-analysis-latest:
+    runs-on: ubuntu-latest
+    name: PHPStan (Laravel 13, Larastan 3)
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          # The current toolchain: PHPStan 2 + Larastan 3 on the newest Laravel
+          php-version: '8.4'
+          extensions: mbstring, pdo, pdo_sqlite, sqlite3
+          coverage: none
+
+      - name: Install dependencies
+        run: |
+          composer require "laravel/framework:13.*" "orchestra/testbench:11.*" --no-interaction --no-update
+          composer require laravel/ai laravel/mcp --dev --no-interaction --no-update
+          composer update --prefer-dist --no-interaction
+
+      # Includes src/Integrations, which the PHP 8.1 baseline cannot load
+      - name: Run PHPStan
+        run: vendor/bin/phpstan analyse -c phpstan-integrations.neon.dist --no-progress --error-format=github
 
   code-style:
     runs-on: ubuntu-latest

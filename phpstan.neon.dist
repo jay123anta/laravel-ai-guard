@@ -8,6 +8,15 @@ parameters:
         - config
         - database
         - routes
+    excludePaths:
+        # Optional laravel/ai integration (PHP 8.3+, Laravel 12+): analysed by phpstan-integrations.neon.dist
+        - src/Integrations
     ignoreErrors:
         # Detection results and config are passed as plain arrays by design
         - identifier: missingType.iterableValue
+        # Larastan 3 resolves the config directory from the Testbench skeleton, not this
+        # package, so env() in the package's own config file is misreported
+        -
+            identifier: larastan.noEnvCallsOutsideOfConfig
+            path: config/ai-guard.php
+            reportUnmatched: false

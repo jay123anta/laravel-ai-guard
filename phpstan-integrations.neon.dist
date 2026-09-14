@@ -1,0 +1,18 @@
+# Everything, including the optional laravel/ai integration. Needs laravel/ai installed
+# (PHP 8.3+, Laravel 12+): vendor/bin/phpstan analyse -c phpstan-integrations.neon.dist
+includes:
+    - vendor/larastan/larastan/extension.neon
+
+parameters:
+    level: 6
+    paths:
+        - src
+        - config
+        - database
+        - routes
+    ignoreErrors:
+        - identifier: missingType.iterableValue
+        -
+            identifier: larastan.noEnvCallsOutsideOfConfig
+            path: config/ai-guard.php
+            reportUnmatched: false

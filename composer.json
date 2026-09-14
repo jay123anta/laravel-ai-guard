@@ -34,16 +34,31 @@
     },
     "require": {
         "php": "^8.1",
-        "illuminate/support": "^10.0|^11.0|^12.0",
-        "illuminate/database": "^10.0|^11.0|^12.0",
-        "illuminate/http": "^10.0|^11.0|^12.0",
-        "illuminate/cache": "^10.0|^11.0|^12.0"
+        "guzzlehttp/guzzle": "^7.5|^8.0",
+        "illuminate/cache": "^10.0|^11.0|^12.0|^13.0",
+        "illuminate/console": "^10.0|^11.0|^12.0|^13.0",
+        "illuminate/contracts": "^10.0|^11.0|^12.0|^13.0",
+        "illuminate/database": "^10.0|^11.0|^12.0|^13.0",
+        "illuminate/events": "^10.0|^11.0|^12.0|^13.0",
+        "illuminate/http": "^10.0|^11.0|^12.0|^13.0",
+        "illuminate/routing": "^10.0|^11.0|^12.0|^13.0",
+        "illuminate/support": "^10.0|^11.0|^12.0|^13.0",
+        "illuminate/view": "^10.0|^11.0|^12.0|^13.0",
+        "paragonie/sodium_compat": "^1.21 || ^2.0"
     },
     "require-dev": {
         "larastan/larastan": "^2.9|^3.0",
         "laravel/pint": "^1.13",
-        "orchestra/testbench": "^8.0|^9.0|^10.0",
-        "phpunit/phpunit": "^10.0|^11.0"
+        "orchestra/testbench": "^8.0|^9.0|^10.0|^11.0",
+        "phpunit/phpunit": "^10.0|^11.0|^12.0"
+    },
+    "suggest": {
+        "ext-intl": "Full Unicode NFKC folding for prompt-injection de-obfuscation (a built-in fallback covers the common cases)",
+        "ext-sodium": "Native Ed25519 for Web Bot Auth verification (paragonie/sodium_compat is used otherwise)",
+        "ext-dom": "HTML sanitizing for AiGuard::safeHtml() and @aiSafe (plain-text escaping is used otherwise)",
+        "league/commonmark": "Markdown rendering for AiGuard::safeHtml() (installed with laravel/framework)",
+        "laravel/ai": "Guard laravel/ai agents and tools: the GuardPrompt agent middleware and AiGuard::guardTools() (PHP 8.3+, Laravel 12+)",
+        "laravel/mcp": "Wrap MCP client tools for laravel/ai agents with AiGuard::guardTools()"
     },
     "autoload": {
         "psr-4": {

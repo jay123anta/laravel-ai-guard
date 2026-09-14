@@ -9,6 +9,7 @@ LICENSE text eol=lf
 /.gitignore export-ignore
 /phpunit.xml export-ignore
 /phpstan.neon.dist export-ignore
+/phpstan-integrations.neon.dist export-ignore
 /pint.json export-ignore
 /CONTRIBUTING.md export-ignore
 /SECURITY.md export-ignore

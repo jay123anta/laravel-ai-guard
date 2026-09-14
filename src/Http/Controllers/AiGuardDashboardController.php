@@ -26,7 +26,10 @@ class AiGuardDashboardController extends Controller
         $confidenceBreakdown = AiThreatLog::getConfidenceBreakdown($hours);
         $detectorInfo = app('ai-guard')->getDetectorInfo();
 
-        return view('ai-guard::dashboard', compact(
+        /** @var view-string $view Registered by the service provider's loadViewsFrom() */
+        $view = 'ai-guard::dashboard';
+
+        return view($view, compact(
             'stats',
             'recentThreats',
             'topSources',

@@ -6,6 +6,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use JayAnta\AiGuard\Models\AiThreatLog;
+use JayAnta\AiGuard\Services\BotSignatures;
 
 class AiGuardApiController extends Controller
 {
@@ -17,9 +18,15 @@ class AiGuardApiController extends Controller
         'ai_crawler', 'prompt_injection', 'data_harvester', 'api_abuser',
         'honeypot_trap', 'pii_leak', 'robots_txt_violation', 'suspicious_fingerprint',
         'seo_bot', 'scraper', 'bad_bot', 'search_engine',
+        'spoofed_bot', 'indirect_prompt_injection', 'llm_output_threat', 'tool_injection', 'system_prompt_leak',
+        'llm_budget_exceeded', 'content_moderation', 'denied_topic', 'multi_turn_attack',
+        'tool_call_blocked', 'tool_call_held', 'mcp_tool_changed', 'mcp_server_blocked', 'unsafe_sql',
+        'ai_agent_denied',
     ];
 
     private const ALLOWED_ACTIONS = ['logged', 'blocked', 'rate_limited'];
+
+    private const ALLOWED_VERIFICATIONS = ['verified', 'spoofed', 'unverified'];
 
     public function index(Request $request): JsonResponse
     {
@@ -29,8 +36,18 @@ class AiGuardApiController extends Controller
         $query = AiThreatLog::recent($hours)->notFalsePositive();
 
         $threatType = $request->query('threat_type');
-        if ($threatType && in_array($threatType, self::ALLOWED_THREAT_TYPES, true)) {
+        if (is_string($threatType) && in_array($threatType, self::ALLOWED_THREAT_TYPES, true)) {
             $query->where('threat_type', $threatType);
+        }
+
+        $botCategory = $request->query('bot_category');
+        if (is_string($botCategory) && array_key_exists($botCategory, BotSignatures::getCategories())) {
+            $query->where('bot_category', $botCategory);
+        }
+
+        $verification = $request->query('bot_verification');
+        if (is_string($verification) && in_array($verification, self::ALLOWED_VERIFICATIONS, true)) {
+            $query->where('bot_verification', $verification);
         }
 
         $actionTaken = $request->query('action_taken');

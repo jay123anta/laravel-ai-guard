@@ -4,40 +4,16 @@ namespace JayAnta\AiGuard\Tests\Feature;
 
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Route;
-use Illuminate\Support\Facades\Schema;
-use JayAnta\AiGuard\AiGuardServiceProvider;
 use JayAnta\AiGuard\Events\ThreatDetected;
 use JayAnta\AiGuard\Http\Middleware\AiGuardMiddleware;
 use JayAnta\AiGuard\Models\AiThreatLog;
-use JayAnta\AiGuard\Services\AiDetector;
-use JayAnta\AiGuard\Services\PromptInjectionDetector;
-use Orchestra\Testbench\TestCase;
+use JayAnta\AiGuard\Tests\TestCase;
 
 class AiGuardMiddlewareTest extends TestCase
 {
-    protected function getPackageProviders($app): array
-    {
-        return [AiGuardServiceProvider::class];
-    }
-
-    protected function getEnvironmentSetUp($app): void
-    {
-        $app['config']->set('database.default', 'testing');
-        $app['config']->set('database.connections.testing', [
-            'driver' => 'sqlite',
-            'database' => ':memory:',
-            'prefix' => '',
-        ]);
-
-        $app['config']->set('ai-guard.enabled', true);
-        $app['config']->set('ai-guard.mode', 'log_only');
-    }
-
     protected function setUp(): void
     {
         parent::setUp();
-
-        $this->createThreatLogsTable();
 
         Route::middleware(AiGuardMiddleware::class)->group(function () {
             Route::get('/test-ai-guard', fn () => response('ok'));
@@ -45,33 +21,9 @@ class AiGuardMiddlewareTest extends TestCase
         });
     }
 
-    private function createThreatLogsTable(): void
-    {
-        Schema::create('ai_threat_logs', function ($table) {
-            $table->bigIncrements('id');
-            $table->string('ip_address', 45)->nullable();
-            $table->text('user_agent')->nullable();
-            $table->string('threat_type', 50);
-            $table->string('threat_source', 100)->nullable();
-            $table->unsignedTinyInteger('confidence_score')->default(0);
-            $table->text('request_url')->nullable();
-            $table->string('request_method', 10)->nullable();
-            $table->string('matched_pattern', 255)->nullable();
-            $table->text('payload_snippet')->nullable();
-            $table->json('headers_snapshot')->nullable();
-            $table->string('action_taken', 20)->default('logged');
-            $table->boolean('is_false_positive')->default(false);
-            $table->string('country_code', 2)->nullable();
-            $table->timestamp('created_at')->nullable();
-            $table->timestamp('updated_at')->nullable();
-        });
-    }
-
     private function rebindDetectors(): void
     {
-        $config = config('ai-guard');
-        $this->app->singleton(AiDetector::class, fn () => new AiDetector($config));
-        $this->app->singleton(PromptInjectionDetector::class, fn () => new PromptInjectionDetector($config));
+        $this->refreshAiGuard();
     }
 
     // -------------------------------------------------------------------------
@@ -100,6 +52,8 @@ class AiGuardMiddlewareTest extends TestCase
         $this->assertSame('GPTBot', $log->threat_source);
         $this->assertSame(95, $log->confidence_score);
         $this->assertSame('GPTBot', $log->matched_pattern);
+        $this->assertSame('ai_training', $log->bot_category);
+        $this->assertSame('AI Training Crawler', $log->getBotCategoryLabel());
         $this->assertSame('logged', $log->action_taken);
         $this->assertSame('GET', $log->request_method);
         $this->assertStringContainsString('/test-ai-guard', $log->request_url);
@@ -203,7 +157,7 @@ class AiGuardMiddlewareTest extends TestCase
         // Step 4: Verify all injection-specific fields
         $this->assertSame('prompt_injection', $log->threat_type);
         $this->assertSame('prompt_injection_pattern', $log->threat_source);
-        $this->assertSame(90, $log->confidence_score);
+        $this->assertSame(95, $log->confidence_score);
         $this->assertSame('logged', $log->action_taken);
         $this->assertSame('POST', $log->request_method);
         $this->assertNotNull($log->matched_pattern);
@@ -248,7 +202,8 @@ class AiGuardMiddlewareTest extends TestCase
         $log = AiThreatLog::first();
         $this->assertSame('prompt_injection', $log->threat_type);
         $this->assertSame('blocked', $log->action_taken);
-        $this->assertSame(90, $log->confidence_score);
+        // unrestricted_persona (85) + ai_without_rules + you_are_now + no_limits stacking
+        $this->assertSame(100, $log->confidence_score);
     }
 
     // -------------------------------------------------------------------------
@@ -444,11 +399,11 @@ class AiGuardMiddlewareTest extends TestCase
 
         $response->assertStatus(200);
 
-        // Nested injection was detected
+        // Nested injection was detected — two signals stack
         $this->assertDatabaseCount('ai_threat_logs', 1);
         $log = AiThreatLog::first();
         $this->assertSame('prompt_injection', $log->threat_type);
-        $this->assertSame(90, $log->confidence_score);
+        $this->assertSame(100, $log->confidence_score);
     }
 
     // -------------------------------------------------------------------------
@@ -561,26 +516,28 @@ class AiGuardMiddlewareTest extends TestCase
 
     public function test_full_cycle_all_major_crawlers_detected(): void
     {
+        // user-agent => [source, bot_category, confidence]
         $crawlers = [
-            'GPTBot/1.0' => 'GPTBot',
-            'ClaudeBot/1.0' => 'ClaudeBot',
-            'CCBot/2.0' => 'CCBot',
-            'PerplexityBot/1.0' => 'PerplexityBot',
-            'Bytespider' => 'Bytespider',
+            'GPTBot/1.0' => ['GPTBot', 'ai_training', 95],
+            'ClaudeBot/1.0' => ['ClaudeBot', 'ai_training', 95],
+            'CCBot/2.0' => ['CCBot', 'ai_training', 95],
+            'PerplexityBot/1.0' => ['PerplexityBot', 'ai_search', 65],
+            'Bytespider' => ['Bytespider', 'ai_training', 95],
         ];
 
-        foreach ($crawlers as $ua => $expectedSource) {
+        foreach (array_keys($crawlers) as $ua) {
             $this->withHeaders(['User-Agent' => $ua])->get('/test-ai-guard');
         }
 
         $this->assertSame(count($crawlers), AiThreatLog::count());
 
-        // Each logged with correct source
-        foreach ($crawlers as $ua => $expectedSource) {
+        // Each logged with correct source, purpose, and score
+        foreach ($crawlers as [$expectedSource, $expectedCategory, $expectedScore]) {
             $this->assertDatabaseHas('ai_threat_logs', [
                 'threat_source' => $expectedSource,
                 'threat_type' => 'ai_crawler',
-                'confidence_score' => 95,
+                'bot_category' => $expectedCategory,
+                'confidence_score' => $expectedScore,
             ]);
         }
     }
@@ -604,9 +561,8 @@ class AiGuardMiddlewareTest extends TestCase
 
         $this->assertSame(count($payloads), AiThreatLog::promptInjections()->count());
 
-        // All scored 90
-        $allScores = AiThreatLog::pluck('confidence_score')->unique()->toArray();
-        $this->assertSame([90], $allScores);
+        // Every jailbreak form is a strong signal
+        $this->assertGreaterThanOrEqual(80, (int) AiThreatLog::min('confidence_score'));
     }
 
     // -------------------------------------------------------------------------
@@ -728,5 +684,33 @@ class AiGuardMiddlewareTest extends TestCase
         $response->assertStatus(200);
         $this->assertDatabaseCount('ai_threat_logs', 1);
         $this->assertSame('ai_crawler', AiThreatLog::first()->threat_type);
+    }
+
+    // -------------------------------------------------------------------------
+    // Regression: a search engine name in the UA must not mask an attack tool
+    // -------------------------------------------------------------------------
+
+    public function test_search_engine_suffix_does_not_mask_attack_tools(): void
+    {
+        config()->set('ai-guard.mode', 'block');
+        $this->rebindDetectors();
+
+        $cases = [
+            'sqlmap/1.8#stable (compatible; Googlebot/2.1)' => 'bad_bot',
+            'Mozilla/5.0 HeadlessChrome/120.0 Googlebot' => 'scraper',
+            'Mozilla/5.00 (Nikto/2.1.6) bingbot' => 'bad_bot',
+        ];
+
+        foreach ($cases as $userAgent => $expectedType) {
+            $response = $this->withHeaders([
+                'User-Agent' => $userAgent,
+                'Accept-Language' => 'en',
+            ])->get('/test-ai-guard');
+
+            $response->assertStatus(403);
+            $response->assertJson(['threat_type' => $expectedType]);
+        }
+
+        $this->assertSame(3, AiThreatLog::blocked()->count());
     }
 }

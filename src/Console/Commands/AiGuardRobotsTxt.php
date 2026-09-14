@@ -4,19 +4,37 @@ namespace JayAnta\AiGuard\Console\Commands;
 
 use Illuminate\Console\Command;
 use JayAnta\AiGuard\Services\BotSignatures;
+use JayAnta\AiGuard\Support\AiPreferences;
 
 class AiGuardRobotsTxt extends Command
 {
     protected $signature = 'ai-guard:robots-txt
         {--output= : Write to file path (default: print to console)}
-        {--categories=ai_training,ai_assistants : Comma-separated categories to block}
+        {--categories=ai_training,ai_search,ai_agents : Comma-separated categories to block (ai_assistants = ai_search + ai_agents)}
         {--all : Block all categories except search_engines}
-        {--append : Append to existing robots.txt instead of overwriting}';
+        {--append : Append to existing robots.txt instead of overwriting}
+        {--content-usage= : IETF AIPREF preferences for all crawlers, e.g. "train-ai=n" (default: config ai_preferences.content_usage)}
+        {--content-signal= : Cloudflare Content Signals, e.g. "search=yes, ai-train=no" (default: config ai_preferences.content_signal)}';
 
     protected $description = 'Generate a robots.txt that blocks AI crawlers and scrapers';
 
     public function handle(): int
     {
+        $contentUsage = $this->option('content-usage') ?? config('ai-guard.ai_preferences.content_usage');
+        $contentSignal = $this->option('content-signal') ?? config('ai-guard.ai_preferences.content_signal');
+
+        if (is_string($contentUsage) && $contentUsage !== '' && ! AiPreferences::isValidContentUsage($contentUsage)) {
+            $this->error("Invalid Content-Usage value \"{$contentUsage}\" — expected key=y|n pairs, e.g. \"train-ai=n, search=y\".");
+
+            return Command::FAILURE;
+        }
+
+        if (is_string($contentSignal) && $contentSignal !== '' && ! AiPreferences::isValidContentSignal($contentSignal)) {
+            $this->error("Invalid Content-Signal value \"{$contentSignal}\" — expected key=yes|no pairs, e.g. \"search=yes, ai-train=no\".");
+
+            return Command::FAILURE;
+        }
+
         $categories = $this->getSelectedCategories();
         $allBots = BotSignatures::getCategories();
         $lines = [];
@@ -29,22 +47,45 @@ class AiGuardRobotsTxt extends Command
         $lines[] = '';
 
         $totalBots = 0;
+        $written = [];
 
         foreach ($categories as $categoryKey) {
             if (! isset($allBots[$categoryKey])) {
+                $this->warn("Unknown category: {$categoryKey}");
+
                 continue;
             }
 
             $category = $allBots[$categoryKey];
+            $tokens = $category['bots'];
+
+            // Training-control tokens never appear in traffic but only work in robots.txt
+            if ($categoryKey === 'ai_training') {
+                $tokens = array_merge($tokens, BotSignatures::CONTROL_TOKENS);
+            }
+
             $lines[] = '# '.str_repeat('-', 60);
-            $lines[] = '# '.$category['label'].' ('.count($category['bots']).' bots)';
+            $lines[] = '# '.$category['label'].' ('.count($tokens).' tokens)';
             $lines[] = '# '.str_repeat('-', 60);
 
-            foreach ($category['bots'] as $bot) {
+            if ($categoryKey === 'ai_agents') {
+                $lines[] = '# These fetch pages for a person and many do not read robots.txt:';
+                $lines[] = '# enforce with the ai-guard.agents middleware on pages agents must not use.';
+                $lines[] = '';
+            }
+
+            foreach ($tokens as $bot) {
                 // Clean bot name for robots.txt — remove trailing slashes and special chars
                 $botName = rtrim($bot, '/ -');
-                if ($botName === '') {
+                if ($botName === '' || isset($written[strtolower($botName)])) {
                     continue;
+                }
+                $written[strtolower($botName)] = true;
+
+                if (in_array($bot, BotSignatures::CONTROL_TOKENS, true)) {
+                    $lines[] = '# robots.txt-only control token (never sent as a User-Agent)';
+                } elseif (BotSignatures::isLegacyToken($bot)) {
+                    $lines[] = '# legacy token (retired by the vendor)';
                 }
 
                 $lines[] = 'User-agent: '.$botName;
@@ -66,6 +107,16 @@ class AiGuardRobotsTxt extends Command
         $lines[] = '';
         $lines[] = 'User-agent: *';
         $lines[] = 'Allow: /';
+
+        // Usage preferences for every crawler that honours them (drafts — advisory only)
+        if (is_string($contentUsage) && $contentUsage !== '') {
+            $lines[] = '# AI usage preferences (IETF AIPREF): https://datatracker.ietf.org/wg/aipref/about/';
+            $lines[] = 'Content-Usage: '.AiPreferences::normalize($contentUsage);
+        }
+        if (is_string($contentSignal) && $contentSignal !== '') {
+            $lines[] = '# Content Signals (search / ai-input / ai-train): https://contentsignals.org/';
+            $lines[] = 'Content-Signal: '.AiPreferences::normalize($contentSignal);
+        }
         $lines[] = '';
         $lines[] = '# Generated: '.now()->toDateTimeString();
         $lines[] = '# Bots blocked: '.$totalBots;
@@ -112,15 +163,18 @@ class AiGuardRobotsTxt extends Command
         return Command::SUCCESS;
     }
 
+    /**
+     * @return array<int, string>
+     */
     private function getSelectedCategories(): array
     {
         if ($this->option('all')) {
-            return ['ai_training', 'ai_assistants', 'seo_tools', 'scrapers', 'bad_bots', 'data_harvesters'];
+            return array_values(array_diff(array_keys(BotSignatures::getCategories()), ['search_engines']));
         }
 
-        $input = $this->option('categories');
-        $categories = array_map('trim', explode(',', $input));
+        $input = (string) $this->option('categories');
+        $categories = array_filter(array_map('trim', explode(',', $input)), fn ($c) => $c !== '');
 
-        return array_filter($categories, fn ($c) => $c !== '');
+        return BotSignatures::expandCategories(array_values($categories));
     }
 }

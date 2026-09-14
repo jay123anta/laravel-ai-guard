@@ -4,8 +4,10 @@ namespace JayAnta\AiGuard\Models;
 
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use JayAnta\AiGuard\Services\BotSignatures;
 
 /**
  * @property int $id
@@ -13,6 +15,8 @@ use Illuminate\Support\Facades\DB;
  * @property string|null $user_agent
  * @property string|null $threat_type
  * @property string|null $threat_source
+ * @property string|null $bot_category
+ * @property string|null $bot_verification
  * @property int $confidence_score
  * @property string|null $request_url
  * @property string|null $request_method
@@ -22,8 +26,8 @@ use Illuminate\Support\Facades\DB;
  * @property string|null $action_taken
  * @property bool $is_false_positive
  * @property string|null $country_code
- * @property \Illuminate\Support\Carbon|null $created_at
- * @property \Illuminate\Support\Carbon|null $updated_at
+ * @property Carbon|null $created_at
+ * @property Carbon|null $updated_at
  * @property-read int|null $total Aggregate alias from getTopIps()/getTopSources()/getTimeline()
  */
 class AiThreatLog extends Model
@@ -35,6 +39,8 @@ class AiThreatLog extends Model
         'user_agent',
         'threat_type',
         'threat_source',
+        'bot_category',
+        'bot_verification',
         'confidence_score',
         'request_url',
         'request_method',
@@ -156,6 +162,10 @@ class AiThreatLog extends Model
             'pii_leaks' => (clone $query)->where('threat_type', 'pii_leak')->count(),
             'bad_bots' => (clone $query)->where('threat_type', 'bad_bot')->count(),
             'scrapers' => (clone $query)->where('threat_type', 'scraper')->count(),
+            'ai_training_crawlers' => (clone $query)->where('bot_category', 'ai_training')->count(),
+            'ai_search_crawlers' => (clone $query)->where('bot_category', 'ai_search')->count(),
+            'ai_agents' => (clone $query)->where('bot_category', 'ai_agents')->count(),
+            'spoofed_bots' => (clone $query)->where('bot_verification', 'spoofed')->count(),
             'blocked' => (clone $query)->where('action_taken', 'blocked')->count(),
             'rate_limited' => (clone $query)->where('action_taken', 'rate_limited')->count(),
         ];
@@ -259,7 +269,43 @@ class AiThreatLog extends Model
             'scraper' => 'Web Scraper',
             'bad_bot' => 'Malicious Bot',
             'search_engine' => 'Search Engine',
+            'spoofed_bot' => 'Spoofed Bot',
+            'indirect_prompt_injection' => 'Indirect Prompt Injection',
+            'llm_output_threat' => 'LLM Output Threat',
+            'tool_injection' => 'Tool Injection',
+            'system_prompt_leak' => 'System Prompt Leak',
+            'llm_budget_exceeded' => 'AI Budget Exceeded',
+            'content_moderation' => 'Harmful Content',
+            'denied_topic' => 'Denied Topic',
+            'multi_turn_attack' => 'Multi-Turn Attack',
+            'tool_call_blocked' => 'Tool Call Blocked',
+            'tool_call_held' => 'Tool Call Held for Approval',
+            'mcp_tool_changed' => 'MCP Tool Changed',
+            'mcp_server_blocked' => 'MCP Server Blocked',
+            'unsafe_sql' => 'Unsafe SQL',
+            'ai_agent_denied' => 'AI Agent Denied',
             default => ucfirst(str_replace('_', ' ', $this->threat_type ?? 'Unknown')),
+        };
+    }
+
+    public function getBotCategoryLabel(): ?string
+    {
+        if ($this->bot_category === null) {
+            return null;
+        }
+
+        return BotSignatures::getCategories()[$this->bot_category]['label']
+            ?? ucfirst(str_replace('_', ' ', $this->bot_category));
+    }
+
+    public function getVerificationLabel(): ?string
+    {
+        return match ($this->bot_verification) {
+            'verified' => 'Verified',
+            'spoofed' => 'Spoofed',
+            'unverified' => 'Unverified',
+            null => null,
+            default => ucfirst($this->bot_verification),
         };
     }
 
@@ -301,5 +347,27 @@ class AiThreatLog extends Model
     public function scopeScrapers(Builder $query): Builder
     {
         return $query->where('threat_type', 'scraper');
+    }
+
+    // -------------------------------------------------------------------------
+    // v3 Scopes
+    // -------------------------------------------------------------------------
+
+    /**
+     * @param  Builder<AiThreatLog>  $query
+     * @return Builder<AiThreatLog>
+     */
+    public function scopeBotCategory(Builder $query, string $category): Builder
+    {
+        return $query->where('bot_category', $category);
+    }
+
+    /**
+     * @param  Builder<AiThreatLog>  $query
+     * @return Builder<AiThreatLog>
+     */
+    public function scopeSpoofedBots(Builder $query): Builder
+    {
+        return $query->where('bot_verification', 'spoofed');
     }
 }

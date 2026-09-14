@@ -157,6 +157,14 @@
                                     @else
                                         <span class="rounded-full px-2 py-1 text-xs font-medium bg-slate-500/20 text-slate-400">{{ $threat->getThreatTypeLabel() }}</span>
                                     @endif
+                                    @if($threat->bot_category)
+                                        <span class="block mt-1 text-xs text-slate-500">{{ $threat->getBotCategoryLabel() }}</span>
+                                    @endif
+                                    @if($threat->bot_verification === 'spoofed')
+                                        <span class="inline-block mt-1 rounded-full px-2 py-0.5 text-xs font-medium bg-red-500/20 text-red-400">Spoofed</span>
+                                    @elseif($threat->bot_verification === 'verified')
+                                        <span class="inline-block mt-1 rounded-full px-2 py-0.5 text-xs font-medium bg-green-500/20 text-green-400">Verified</span>
+                                    @endif
                                 </td>
                                 <td class="px-5 py-3">{{ $threat->threat_source ?? '—' }}</td>
                                 <td class="px-5 py-3">

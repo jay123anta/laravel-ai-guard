@@ -22,9 +22,17 @@ class AiGuardStats extends Command
 
         $this->table(['Metric', 'Count'], [
             ['Total Threats Detected', $stats['total']],
-            ['AI Crawlers', $stats['ai_crawlers']],
+            ['AI Crawlers (all)', $stats['ai_crawlers']],
+            ['  AI Training', $stats['ai_training_crawlers']],
+            ['  AI Search', $stats['ai_search_crawlers']],
+            ['  AI Agents', $stats['ai_agents']],
+            ['Spoofed Bots', $stats['spoofed_bots']],
             ['Prompt Injections', $stats['prompt_injections']],
             ['Data Harvesters', $stats['data_harvesters']],
+            ['Scrapers', $stats['scrapers']],
+            ['Malicious Bots', $stats['bad_bots']],
+            ['Honeypot Traps', $stats['honeypot_traps']],
+            ['PII Leaks', $stats['pii_leaks']],
             ['Requests Blocked', $stats['blocked']],
             ['Requests Rate Limited', $stats['rate_limited']],
         ]);

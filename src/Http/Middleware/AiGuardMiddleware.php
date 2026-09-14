@@ -8,14 +8,15 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
 use JayAnta\AiGuard\Events\ThreatDetected;
-use JayAnta\AiGuard\Models\AiThreatLog;
 use JayAnta\AiGuard\Services\AiDetector;
+use JayAnta\AiGuard\Services\BotVerifier;
 use JayAnta\AiGuard\Services\HoneypotService;
 use JayAnta\AiGuard\Services\MlDetector;
 use JayAnta\AiGuard\Services\PromptInjectionDetector;
 use JayAnta\AiGuard\Services\RequestFingerprinter;
 use JayAnta\AiGuard\Services\ResponseScanner;
 use JayAnta\AiGuard\Services\RobotsTxtEnforcer;
+use JayAnta\AiGuard\Support\ThreatLogger;
 
 class AiGuardMiddleware
 {
@@ -33,6 +34,8 @@ class AiGuardMiddleware
 
     private MlDetector $mlDetector;
 
+    private BotVerifier $botVerifier;
+
     public function __construct(
         AiDetector $aiDetector,
         PromptInjectionDetector $promptDetector,
@@ -41,6 +44,7 @@ class AiGuardMiddleware
         RobotsTxtEnforcer $robotsEnforcer,
         RequestFingerprinter $fingerprinter,
         MlDetector $mlDetector,
+        BotVerifier $botVerifier,
     ) {
         $this->aiDetector = $aiDetector;
         $this->promptDetector = $promptDetector;
@@ -49,6 +53,7 @@ class AiGuardMiddleware
         $this->robotsEnforcer = $robotsEnforcer;
         $this->fingerprinter = $fingerprinter;
         $this->mlDetector = $mlDetector;
+        $this->botVerifier = $botVerifier;
     }
 
     public function handle(Request $request, Closure $next): mixed
@@ -75,28 +80,46 @@ class AiGuardMiddleware
 
         // 2. Bot signature + AI crawler + data harvester detection
         $aiResult = $this->aiDetector->detect($request);
-        if ($aiResult['detected']) {
-            $allResults[] = $aiResult;
 
-            // 2a. robots.txt enforcement — boost confidence if bot violates
+        // 2a. Bot verification — Web Bot Auth signature, published IP ranges, reverse DNS
+        $verification = $this->botVerifier->verify($request);
+
+        if ($verification['status'] === BotVerifier::SPOOFED) {
+            // The claimed identity is fake — report the impersonation, not the claim
+            $allResults[] = $this->botVerifier->spoofedResult($verification, $aiResult);
+        } elseif ($aiResult['detected']) {
+            if ($verification['status'] !== null) {
+                $aiResult['bot_verification'] = $verification['status'];
+            }
+
+            // 2b. robots.txt enforcement — boost confidence if bot violates
             $botInfo = $this->aiDetector->getBotInfo($request);
             $robotsResult = $this->robotsEnforcer->check($request, $botInfo);
             if ($robotsResult['detected']) {
                 $aiResult['confidence_score'] = min($aiResult['confidence_score'] + $robotsResult['confidence_score'], 100);
                 $aiResult['matched_pattern'] .= ' + '.$robotsResult['matched_pattern'];
-                $allResults[array_key_last($allResults)] = $aiResult;
             }
+
+            $allResults[] = $aiResult;
+        } elseif ($verification['status'] === BotVerifier::VERIFIED && $verification['method'] === 'web_bot_auth') {
+            // A signed AI agent browsing with an ordinary browser user-agent
+            $allResults[] = $this->botVerifier->signedAgentResult($verification);
         }
 
         // 3. Prompt injection detection
-        $injectionResult = $this->promptDetector->detect($request);
+        $inspection = $this->promptDetector->inspect($request);
+        $injectionResult = $inspection['result'];
+
+        // 3a. ML — borderline candidates, or every input on classifier-first routes
+        if ($this->mlDetector->shouldAnalyze($request, $injectionResult, $inspection['texts'])) {
+            $injectionResult = $this->mlDetector->analyze(
+                $this->mlDetector->prepareInput($inspection['texts']),
+                $injectionResult,
+                $this->mlDetector->isAlwaysRunRoute($request)
+            );
+        }
+
         if ($injectionResult['detected']) {
-            // 3a. ML enhancement — refine confidence for borderline detections
-            $mlInput = $request->getContent();
-            if (empty($mlInput)) {
-                $mlInput = $injectionResult['payload_snippet'] ?? '';
-            }
-            $injectionResult = $this->mlDetector->analyze($mlInput, $injectionResult);
             $allResults[] = $injectionResult;
         }
 
@@ -111,7 +134,7 @@ class AiGuardMiddleware
 
         if ($threatResult['detected']) {
             $actionTaken = $this->determineAction($threatResult, $config);
-            $this->logThreat($request, $threatResult, $config, $actionTaken);
+            $this->logThreat($request, $threatResult, $actionTaken);
             $this->dispatchEvent($request, $threatResult, $actionTaken);
             $this->sendAlertIfNeeded($threatResult, $config, $actionTaken);
 
@@ -138,7 +161,7 @@ class AiGuardMiddleware
 
             if ($scanResult['detected']) {
                 $actionTaken = $this->determineAction($scanResult, $config);
-                $this->logThreat($request, $scanResult, $config, $actionTaken);
+                $this->logThreat($request, $scanResult, $actionTaken);
                 $this->dispatchEvent($request, $scanResult, $actionTaken);
                 $this->sendAlertIfNeeded($scanResult, $config, $actionTaken);
 
@@ -146,7 +169,9 @@ class AiGuardMiddleware
                 if ($actionTaken === 'blocked') {
                     return response()->json([
                         'error' => 'Response blocked',
-                        'message' => 'PII detected in response by AI Guard',
+                        'message' => $scanResult['threat_type'] === 'indirect_prompt_injection'
+                            ? 'Hidden prompt injection detected in response by AI Guard'
+                            : 'PII detected in response by AI Guard',
                     ], 500);
                 }
             }
@@ -208,7 +233,7 @@ class AiGuardMiddleware
             ], 403);
         }
 
-        if ($actionTaken === 'rate_limited') {
+        if ($actionTaken === 'rate_limited' && ($config['rate_limiting']['enabled'] ?? true)) {
             try {
                 $key = 'ai-guard:'.$request->ip().':'.substr(md5($request->userAgent() ?? ''), 0, 8);
                 $maxAttempts = $config['rate_limiting']['max_attempts'] ?? 60;
@@ -233,51 +258,9 @@ class AiGuardMiddleware
         return $next($request);
     }
 
-    private function logThreat(Request $request, array $result, array $config, string $actionTaken): void
+    private function logThreat(Request $request, array $result, string $actionTaken): void
     {
-        try {
-            $loggingConfig = $config['logging'] ?? [];
-
-            if (! ($loggingConfig['enabled'] ?? true)) {
-                return;
-            }
-
-            $headersSnapshot = null;
-            if ($loggingConfig['log_headers'] ?? true) {
-                $headersSnapshot = [
-                    'User-Agent' => $request->header('User-Agent'),
-                    'Accept' => $request->header('Accept'),
-                    'Accept-Language' => $request->header('Accept-Language'),
-                    'Accept-Encoding' => $request->header('Accept-Encoding'),
-                    'Content-Type' => $request->header('Content-Type'),
-                    'Referer' => $request->header('Referer'),
-                    'X-Forwarded-For' => $request->header('X-Forwarded-For'),
-                    'X-Real-IP' => $request->header('X-Real-IP'),
-                ];
-            }
-
-            AiThreatLog::create([
-                'ip_address' => $request->ip(),
-                'user_agent' => $request->userAgent(),
-                'threat_type' => $result['threat_type'],
-                'threat_source' => $result['threat_source'],
-                'confidence_score' => $result['confidence_score'],
-                'request_url' => $request->fullUrl(),
-                'request_method' => $request->method(),
-                'matched_pattern' => $result['matched_pattern'],
-                'payload_snippet' => isset($result['payload_snippet'])
-                    ? mb_substr($result['payload_snippet'], 0, $loggingConfig['max_payload_length'] ?? 500)
-                    : null,
-                'headers_snapshot' => $headersSnapshot,
-                'action_taken' => $actionTaken,
-                'country_code' => null,
-            ]);
-        } catch (\Throwable $e) {
-            Log::warning('AI Guard: Failed to log threat.', [
-                'error' => $e->getMessage(),
-                'threat_type' => $result['threat_type'] ?? 'unknown',
-            ]);
-        }
+        app(ThreatLogger::class)->log($request, $result, $actionTaken);
     }
 
     private function dispatchEvent(Request $request, array $result, string $actionTaken): void

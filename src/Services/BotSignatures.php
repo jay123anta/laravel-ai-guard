@@ -2,347 +2,53 @@
 
 namespace JayAnta\AiGuard\Services;
 
+use Illuminate\Support\Facades\Log;
+use JayAnta\AiGuard\Support\SignatureFeed;
+
 class BotSignatures
 {
+    /**
+     * robots.txt-only tokens: they control how a vendor may *use* content
+     * (e.g. training) but never appear in a User-Agent header, so they are
+     * written to robots.txt and never matched against traffic.
+     */
+    public const CONTROL_TOKENS = [
+        'Google-Extended',     // Gemini / Vertex AI training
+        'Applebot-Extended',   // Apple Intelligence training
+        'Webzio-Extended',     // Webz.io AI data licensing
+        'YandexAdditional',    // YandexGPT
+    ];
+
+    /**
+     * Tokens the vendor has retired. Still matched (old clients linger) and
+     * still written to robots.txt, but flagged as legacy.
+     */
+    public const LEGACY_TOKENS = [
+        'Claude-Web',
+        'anthropic-ai',
+        'Neeva',
+        'NeevaBot',
+    ];
+
+    /**
+     * v2's single AI assistant category is now split by purpose.
+     */
+    public const CATEGORY_ALIASES = [
+        'ai_assistants' => ['ai_search', 'ai_agents'],
+    ];
+
+    public const AI_CATEGORIES = ['ai_training', 'ai_search', 'ai_agents'];
+
+    private static ?array $categories = null;
+
+    /**
+     * @var array<string, array{regex: string, map: array<string, string>}>
+     */
+    private static array $compiled = [];
+
     public static function getCategories(): array
     {
-        return [
-            'ai_training' => [
-                'label' => 'AI Training Bot',
-                'confidence' => 95,
-                'bots' => [
-                    // --- Original ---
-                    'GPTBot', 'ChatGPT-User', 'OAI-SearchBot',
-                    'Claude-Web', 'ClaudeBot', 'anthropic-ai',
-                    'CCBot', 'Google-Extended', 'Googlebot-Extended',
-                    'Bytespider', 'Diffbot', 'FacebookBot',
-                    'cohere-ai', 'AI2Bot', 'Applebot-Extended',
-                    'ImagesiftBot', 'Omgilibot', 'Timpibot',
-                    'Kangaroo Bot', 'meta-externalagent',
-                    'webz.io', 'iaskspider', 'Amazonbot',
-                    'ISSCyberRiskCrawler', 'FriendlyCrawler',
-                    'Nicecrawler', 'Sidetrade indexer',
-                    'Velenpublicwebcrawler', 'Webzio-Extended',
-                    'img2dataset', 'ICC-Crawler',
-                    'facebookexternalhit',
-                    // --- Added: AI training/data scrapers seen 2024-2025 ---
-                    'Google-CloudVertexBot',       // Google Vertex AI model training
-                    'GoogleOther',                 // Google generic scraping (feeds Gemini)
-                    'DeepSeekBot',                 // DeepSeek LLM training crawler
-                    'TikTokSpider',                // ByteDance (same org as Bytespider)
-                    'ToutiaoSpider',               // ByteDance news spider
-                    'PanguBot',                    // Huawei multimodal LLM training
-                    'cohere-training-data-crawler', // Cohere explicit training crawler
-                    'Ai2Bot-Dolma',                // AI2 Dolma dataset builder
-                    'Spawning-AI',                 // Spawning AI data provenance
-                    'LAIONDownloader',             // LAION ML research datasets
-                    'MaCoCu',                      // EU multilingual corpus crawler
-                    'Cotoyogi',                    // ROIS Japanese language LLM
-                    'TerraCotta',                  // Ceramic AI LLM training
-                    'Brightbot',                   // Bright Data LLM training
-                    'Crawl4AI',                    // Open-source AI scraping framework
-                    'FirecrawlAgent',              // Firecrawl AI scraping/LLM prep
-                    'Factset_spyderbot',           // FactSet AI model training
-                    'SBIntuitionsBot',             // SB Intuitions AI development
-                    'imageSpider',                 // AI image dataset collection
-                    'WARDBot',                     // WEBSPARK AI data scraper
-                    'KunatoCrawler',               // Kunato AI data collection
-                    'MyCentralAIScraperBot',       // AI data scraper
-                    'Poseidon Research Crawler',   // AI research crawler
-                    'meta-externalfetcher',        // Meta AI content fetcher
-                    'meta-webindexer',             // Meta AI search indexer
-                    'ChatGLM-Spider',              // ChatGLM Chinese LLM training
-                    'YandexAdditional',            // YandexGPT LLM training
-                    'Datenbank Crawler',           // Datenbank AI data scraper
-                    'ApifyWebsiteContentCrawler',  // Apify AI scraping service
-                    'Crawlspace',                  // Crawlspace data scraping service
-                    'WRTNBot',                     // WRTN AI bot
-                ],
-            ],
-
-            'ai_assistants' => [
-                'label' => 'AI Assistant',
-                'confidence' => 90,
-                'bots' => [
-                    // --- Original ---
-                    'PerplexityBot', 'YouBot', 'PhindBot',
-                    'KagiBot', 'BraveSearch', 'Neeva',
-                    'MetaAI', 'Siri', 'Copilot',
-                    'NeevaBot',
-                    // --- Added: AI assistants and agent bots seen 2024-2025 ---
-                    'Claude-SearchBot',            // Anthropic search quality bot
-                    'Claude-User',                 // Anthropic Claude user-initiated fetch
-                    'ChatGPT-Browser',             // OpenAI browsing mode
-                    'Perplexity-User',             // Perplexity user-initiated fetch
-                    'Gemini-Deep-Research',         // Google Gemini deep research
-                    'Google-NotebookLM',           // Google NotebookLM assistant
-                    'NotebookLM',                  // Google NotebookLM variant
-                    'GoogleAgent-Mariner',         // Google browser automation agent
-                    'GoogleAgent-Search',          // Google search agent
-                    'Bard-AI',                     // Google Bard AI assistant
-                    'Gemini-AI',                   // Google Gemini AI assistant
-                    'DuckAssistBot',               // DuckDuckGo AI-powered answers
-                    'MistralAI-User',              // Mistral AI assistant fetch
-                    'Andibot',                     // Andi AI search assistant
-                    'kagi-fetcher',                // Kagi AI query resolver
-                    'AzureAI-SearchBot',           // Microsoft Azure AI search
-                    'Amzn-SearchBot',              // Amazon AI search bot
-                    'Amzn-User',                   // Amazon AI user-initiated
-                    'ChatGPT Agent',               // OpenAI agentic browsing
-                    'NovaAct',                     // Amazon web automation agent
-                    'AmazonBuyForMe',              // Amazon AI shopping agent
-                    'Manus-User',                  // Butterfly Effect browser agent
-                    'Operator',                    // OpenAI Operator agent
-                    'TwinAgent',                   // Twin workflow automation agent
-                    'Devin',                       // Devin AI coding assistant
-                    'TavilyBot',                   // Tavily AI search assistant
-                    'LinerBot',                    // Liner AI research assistant
-                    'Poggio-Citations',            // AI citation fetcher
-                    'bigsur.ai',                   // Big Sur AI assistant
-                    'Cloudflare-AutoRAG',          // Cloudflare AI RAG solution
-                    'Thinkbot',                    // Thinkbot AI integration
-                    'bedrockbot',                  // Amazon Bedrock AI applications
-                    'QualifiedBot',                // Qualified AI sales agent
-                    'KlaviyoAIBot',                // Klaviyo AI content bot
-                ],
-            ],
-
-            'search_engines' => [
-                'label' => 'Search Engine',
-                'confidence' => 30,
-                'bots' => [
-                    // --- Original ---
-                    'Googlebot', 'Bingbot', 'bingbot',
-                    'YandexBot', 'Baiduspider', 'DuckDuckBot',
-                    'Sogou', 'Exabot', 'facebot',
-                    'ia_archiver', 'Slurp', 'Applebot',
-                    'Qwantify', 'Seznam', 'Naver',
-                    // --- Added: Search engines and their variants seen 2024-2025 ---
-                    'Storebot-Google',             // Google store/product search
-                    'Google-InspectionTool',       // Google Search Console crawler
-                    'AdsBot-Google',               // Google Ads landing page checker
-                    'Mediapartners-Google',         // Google AdSense content match
-                    'Feedfetcher-Google',           // Google RSS/feed processor
-                    'BingPreview',                 // Bing link preview renderer
-                    'MojeekBot',                   // Mojeek independent search engine
-                    'Qwantbot',                    // Qwant search engine bot
-                    'SeznamBot',                   // Czech Seznam search engine
-                    'Yeti',                        // Naver search crawler (Korea)
-                    'coccoc',                      // Coc Coc Vietnamese search engine
-                    '360Spider',                   // 360 Search (China)
-                    'mail.ru',                     // Mail.Ru search engine (Russia)
-                    'YisouSpider',                 // Yisou Chinese search
-                    'Daum',                        // Daum Korean search engine
-                    'ZumBot',                      // Zum Korean search engine
-                    'Bravebot',                    // Brave Search crawler
-                    'IbouBot',                     // Ibou search indexer
-                    'ZanistaBot',                  // Zanista AI search
-                    'LinkupBot',                   // Linkup enterprise search
-                    'Anomura',                     // Direqt AI search crawler
-                    'archive.org_bot',             // Internet Archive
-                ],
-            ],
-
-            'seo_tools' => [
-                'label' => 'SEO Tool',
-                'confidence' => 60,
-                'bots' => [
-                    // --- Original ---
-                    'AhrefsBot', 'SemrushBot', 'MJ12bot',
-                    'DotBot', 'BLEXBot', 'DataForSeoBot',
-                    'serpstatbot', 'Screaming Frog SEO',
-                    'MozBot', 'Moz/', 'rogerbot',
-                    'RogerBot', 'LinkpadBot', 'MegaIndex',
-                    'BacklinkCrawler', 'SEOkicks', 'Sistrix',
-                    'ContentKingApp', 'DeepCrawl/', 'OnCrawl',
-                    'Cognitiveseo', 'Xenu Link', 'MajesticSEO',
-                    'spbot/', 'BomboraBot', 'SEMrushBot',
-                    'PetalBot',
-                    // --- Added: SEO and marketing bots seen 2024-2025 ---
-                    'AhrefsSiteAudit',             // Ahrefs site audit crawler
-                    'SemrushBot-BA',               // Semrush Backlink Audit
-                    'SemrushBot-SI',               // Semrush Site Index
-                    'SemrushBot-SWA',              // Semrush SEO Writing Assistant
-                    'SemrushBot-OCOB',             // Semrush ContentShake AI
-                    'SplitSignalBot',              // Semrush A/B testing
-                    'SiteAuditBot',                // Semrush Site Audit
-                    'SerpReputationManagementAgent', // Semrush reputation management
-                    'BacklinksExtendedBot',         // Semrush backlinks extended
-                    'Seobility',                   // Seobility SEO checker
-                    'XoviBot',                     // XOVI SEO suite crawler
-                    'SeolytBot',                   // Seolyt SEO tool
-                    'Seekport',                    // Seekport search/SEO crawler
-                    'keys-so-bot',                 // Keys.so SEO analysis
-                    'Morningscore',                // Morningscore SEO tool
-                    'BrightEdge Crawler',          // BrightEdge SEO platform
-                    'RankActive',                  // RankActive SEO tracker
-                    'RankActiveLinkBot',           // RankActive link analysis
-                    'HEADMasterSEO',               // HEAD Master SEO tool
-                    'SEOENGBot',                   // SEOENG SEO tool
-                    'Cocolyzebot',                 // Cocolyze SEO analyzer
-                    'woorankreview',               // WooRank SEO review
-                    'woobot',                      // WooRank bot variant
-                    'LetsearchBot',                // Letsearch SEO bot
-                    'Siteimprove',                 // Siteimprove accessibility/SEO
-                    'Sitebulb/',                   // Sitebulb SEO audit tool
-                    'botify',                      // Botify SEO crawler
-                    'SEOlyticsCrawler',            // SEOlytics SEO tool
-                    'Konturbot',                   // Kontur SEO bot
-                    'SenutoBot',                   // Senuto SEO platform
-                    'URLinspectorBot',             // URLinspector SEO bot
-                ],
-            ],
-
-            'scrapers' => [
-                'label' => 'Web Scraper',
-                'confidence' => 85,
-                'bots' => [
-                    // --- Original ---
-                    'Scrapy/', 'colly -', 'Colly/',
-                    'HeadlessChrome', 'PhantomJS', 'Puppeteer',
-                    'Playwright/', 'Selenium/', 'WebDriver',
-                    'CasperJS', 'Splash/', 'Mechanize/',
-                    'Nightmare/', 'SimplePie/', 'Guzzle/',
-                    'CrawlerBot', 'SpiderBot', 'htmlparser/',
-                    'WebHarvest', 'WebExtract', 'WebGrab',
-                    // --- Added: Scrapers, headless tools, content extractors 2024-2025 ---
-                    'HTTrack',                     // Website copier/mirror tool
-                    'SiteSucker',                  // macOS website downloader
-                    'WebCopier',                   // Web page copier
-                    'WebReaper',                   // Web scraping tool
-                    'WebZIP',                      // Offline browser/scraper
-                    'WebStripper',                 // Web content stripper
-                    'WebLeacher',                  // Content leeching tool
-                    'Offline Explorer',            // Offline browsing tool
-                    'PageGrabber',                 // Page content grabber
-                    'SiteSnagger',                 // Website snagger
-                    'TeleportPro',                 // Website copy tool
-                    'FlashGet',                    // Download manager/scraper
-                    'GetRight',                    // Download manager
-                    'GrabNet',                     // Web scraping tool
-                    'NetZIP',                      // Content downloader
-                    'WWW-Mechanize',               // Perl web scraping library
-                    'LWP::Simple',                 // Perl web client
-                    'crawler4j',                   // Java crawling framework
-                    'Nutch',                       // Apache Nutch crawler framework
-                    'heritrix',                    // Internet Archive crawler engine
-                    'newspaper/',                  // Python news scraping library
-                    'Embedly',                     // Content embedding/extraction
-                    'CherryPicker',                // Selective content scraper
-                    'EmailWolf',                   // Email harvesting scraper
-                    'ExtractorPro',                // Web data extraction tool
-                    'Xaldon WebSpider',            // Web spider tool
-                    // --- Scraping-as-a-Service platforms ---
-                    'ZenRows',                     // ZenRows scraping API
-                    'ScrapingBee',                 // ScrapingBee scraping API
-                    'ScraperAPI',                  // ScraperAPI proxy scraping
-                    'Oxylabs',                     // Oxylabs scraping API
-                    'Crawlbase',                   // Crawlbase scraping API
-                    'WebScrapingAPI',              // WebScrapingAPI service
-                    'ProxyCrawl',                  // ProxyCrawl (now Crawlbase)
-                    'ScrapFly',                    // ScrapFly scraping API
-                    'ScrapeOps',                   // ScrapeOps proxy scraping
-                    'Zyte',                        // Zyte (formerly Scrapinghub)
-                    'AutoScraper',                 // AutoScraper Python library
-                ],
-            ],
-
-            'bad_bots' => [
-                'label' => 'Malicious Bot',
-                'confidence' => 95,
-                'bots' => [
-                    // --- Original ---
-                    'Nikto', 'sqlmap', 'Nessus',
-                    'Nmap', 'Masscan', 'ZmEu',
-                    'w3af', 'Havij', 'Acunetix',
-                    'OpenVAS', 'Burp', 'dirbuster',
-                    'gobuster', 'wpscan', 'Jorgee',
-                    'Morfeus', 'Zgrab', 'masscan',
-                    // 'httpx' deliberately not listed here: it would also match the
-                    // legitimate python-httpx client library (data_harvesters, 80)
-                    'nuclei', 'subfinder',
-                    'jaeles', 'OWASP', 'Arachni',
-                    'Skipfish', 'Wapiti', 'Vega',
-                    'AppScan', 'NetSparker',
-                    // --- Added: Vuln scanners, attack tools, bad bots 2024-2025 ---
-                    'Shodan',                      // Shodan internet scanner
-                    'CensysInspect',               // Censys attack surface scanner
-                    'masscan-ng',                  // Next-gen masscan fork
-                    'Fuzz Faster U Fool',          // ffuf fuzzing tool
-                    'Wfuzz',                       // Web fuzzer
-                    'FHscan',                      // Fast HTTP scanner
-                    'Jbrofuzz',                    // OWASP fuzzer
-                    'l9scan',                      // LeakIX scanner
-                    'l9explore',                   // LeakIX exploration
-                    'l9tcpid',                     // LeakIX TCP identifier
-                    'leakix',                      // LeakIX vulnerability scanner
-                    'Webshag',                     // Web server audit tool
-                    'Nimbostratus',                // Cloud attack tool
-                    'muhstik-scan',                // Muhstik botnet scanner
-                    'T0PHackTeam',                 // Hacking group scanner
-                    'Joomla',                      // Joomla vulnerability scanner
-                    'phpMyAdmin',                  // phpMyAdmin exploit scanner
-                    'scan.lol',                    // Vulnerability scanning service
-                    'probely.com',                 // Security testing scanner
-                    'cyberscan.io',                // Cyber vulnerability scanner
-                    'Hardenize',                   // TLS/security assessment
-                    'NetSystemsResearch',          // Network research scanner
-                    'InternetMeasurement',         // Internet-wide measurement scan
-                    'DomainCrawler',               // Domain intelligence scraper
-                    'DomainStatsBot',              // Domain stats collector
-                    'BackDoorBot',                 // Known malicious crawler
-                    'Black Hole',                  // Content theft bot
-                    'Zeus',                        // Zeus botnet variant
-                    'Siphon',                      // Data siphoning tool
-                    'Vacuum',                      // Data vacuuming tool
-                ],
-            ],
-
-            'data_harvesters' => [
-                'label' => 'Data Harvester',
-                'confidence' => 80,
-                'bots' => [
-                    // --- Original ---
-                    'curl', 'python-requests', 'Go-http-client',
-                    'Java/', 'libwww-perl', 'Wget',
-                    'HTTPie', 'axios', 'node-fetch',
-                    'http_request2', 'pycurl', 'aiohttp',
-                    'httpx', 'urllib', 'requests/',
-                    // --- Added: HTTP clients, libraries, and data collection tools 2024-2025 ---
-                    'python-httpx',                // Modern Python HTTP client
-                    'Python-httplib2',             // Python httplib2 library
-                    'Python-urllib',               // Python urllib (capitalized variant)
-                    'okhttp',                      // OkHttp Java/Android client
-                    'Apache-HttpClient',           // Apache Java HTTP client
-                    'Apache-HttpAsyncClient',      // Apache async Java HTTP client
-                    'RestSharp',                   // .NET REST client library
-                    'Typhoeus',                    // Ruby HTTP client
-                    'Faraday',                     // Ruby HTTP client library
-                    'hackney',                     // Elixir HTTP client
-                    'reqwest',                     // Rust HTTP client
-                    'fasthttp',                    // Go high-perf HTTP client
-                    'lua-resty-http',              // Lua/OpenResty HTTP client
-                    'Zend_Http_Client',            // PHP Zend HTTP client
-                    'GuzzleHttp',                  // PHP Guzzle (full name variant)
-                    'PostmanRuntime',              // Postman API testing client
-                    'insomnia/',                   // Insomnia API client
-                    'http.rb',                     // Ruby HTTP library
-                    'libcurl',                     // cURL library identifier
-                    'node-superagent',             // Node.js HTTP client
-                    'node-urllib',                 // Node.js urllib client
-                    'php-requests',                // PHP Requests library
-                    'http-kit',                    // Clojure HTTP client
-                    'Mojolicious',                 // Perl web framework client
-                    'lwp-request',                 // Perl LWP request
-                    'Dispatch/',                   // Scala HTTP client
-                    'unirest-java',                // Unirest Java HTTP client
-                    'UniversalFeedParser',         // Python RSS/Atom feed parser
-                    'phpcrawl',                    // PHP crawling library
-                    'Symfony BrowserKit',          // Symfony testing client
-                    'colly',                       // Go scraping framework (variant)
-                ],
-            ],
-        ];
+        return self::$categories ??= self::definitions();
     }
 
     public static function getTotalCount(): int
@@ -360,21 +66,449 @@ class BotSignatures
         return count(self::getCategories());
     }
 
-    public static function findBot(string $userAgent): ?array
+    /**
+     * Expand legacy category names ("ai_assistants") to their v3 equivalents.
+     *
+     * @param  array<int, string>  $categories
+     * @return array<int, string>
+     */
+    public static function expandCategories(array $categories): array
     {
-        foreach (self::getCategories() as $categoryKey => $category) {
+        $expanded = [];
+
+        foreach ($categories as $category) {
+            array_push($expanded, ...(self::CATEGORY_ALIASES[$category] ?? [$category]));
+        }
+
+        return array_values(array_unique($expanded));
+    }
+
+    /**
+     * bot_signatures.confidence overrides from config, with v2 aliases expanded and scores clamped.
+     *
+     * @return array<string, int>
+     */
+    public static function confidenceOverrides(array $config): array
+    {
+        $overrides = [];
+
+        foreach ($config['bot_signatures']['confidence'] ?? [] as $category => $score) {
+            foreach (self::expandCategories([(string) $category]) as $expanded) {
+                $overrides[$expanded] = max(0, min(100, (int) $score));
+            }
+        }
+
+        return $overrides;
+    }
+
+    public static function isLegacyToken(string $token): bool
+    {
+        return in_array(strtolower($token), array_map('strtolower', self::LEGACY_TOKENS), true);
+    }
+
+    /**
+     * Whether the token is already covered by the signature database (or is a control token).
+     */
+    public static function isKnownToken(string $token): bool
+    {
+        $needle = strtolower(trim($token));
+
+        foreach (self::getCategories() as $category) {
             foreach ($category['bots'] as $bot) {
-                if (stripos($userAgent, $bot) !== false) {
-                    return [
-                        'category' => $categoryKey,
-                        'label' => $category['label'],
-                        'confidence' => $category['confidence'],
-                        'matched_bot' => $bot,
-                    ];
+                if (strtolower($bot) === $needle) {
+                    return true;
                 }
             }
         }
 
-        return null;
+        return in_array($needle, array_map('strtolower', self::CONTROL_TOKENS), true);
+    }
+
+    /**
+     * Whether the token is in the database that ships with the package (feed tokens excluded).
+     */
+    public static function isBuiltInToken(string $token): bool
+    {
+        $needle = strtolower(trim($token));
+
+        foreach (self::definitions() as $category) {
+            foreach ($category['bots'] as $bot) {
+                if (strtolower($bot) === $needle) {
+                    return true;
+                }
+            }
+        }
+
+        return in_array($needle, array_map('strtolower', self::CONTROL_TOKENS), true);
+    }
+
+    /**
+     * Add tokens (e.g. from the ai.robots.txt feed) to their categories. Tokens the
+     * database already has are skipped. Returns how many were added.
+     *
+     * @param  array<string, array<int, string>>  $tokensByCategory
+     */
+    public static function extend(array $tokensByCategory): int
+    {
+        $categories = self::getCategories();
+        $known = array_fill_keys(array_map('strtolower', self::CONTROL_TOKENS), true);
+        foreach ($categories as $category) {
+            foreach ($category['bots'] as $bot) {
+                $known[strtolower($bot)] = true;
+            }
+        }
+
+        $added = 0;
+        foreach ($tokensByCategory as $key => $tokens) {
+            if (! isset($categories[$key])) {
+                continue;
+            }
+
+            $before = $added;
+            foreach ((array) $tokens as $token) {
+                $token = trim((string) $token);
+                if ($token === '' || isset($known[strtolower($token)])) {
+                    continue;
+                }
+
+                $categories[$key]['bots'][] = $token;
+                $known[strtolower($token)] = true;
+                $added++;
+            }
+
+            if ($added > $before) {
+                unset(self::$compiled[$key]);
+            }
+        }
+
+        self::$categories = $categories;
+
+        return $added;
+    }
+
+    /**
+     * Load the tokens saved by ai-guard:update-signatures.
+     */
+    public static function loadFeed(string $path): int
+    {
+        return is_file($path) ? self::extend(SignatureFeed::load($path)) : 0;
+    }
+
+    /**
+     * Back to the built-in database (drops tokens added with extend()).
+     */
+    public static function reset(): void
+    {
+        self::$categories = null;
+        self::$compiled = [];
+    }
+
+    /**
+     * Every category that matches the user-agent (the most specific token per category).
+     *
+     * Tokens match on word boundaries — "Vega" no longer matches "Vegas", and
+     * "curl" no longer matches inside "libcurl" (which has its own entry).
+     *
+     * @return array<int, array{category: string, label: string, confidence: int, matched_bot: string}>
+     */
+    public static function findAllBots(string $userAgent): array
+    {
+        if ($userAgent === '') {
+            return [];
+        }
+
+        $matches = [];
+
+        foreach (self::getCategories() as $categoryKey => $category) {
+            $compiled = self::compiled($categoryKey, $category['bots']);
+
+            foreach ($compiled['regexes'] as $regex) {
+                if (preg_match($regex, $userAgent, $match) === 1) {
+                    $matches[] = [
+                        'category' => $categoryKey,
+                        'label' => $category['label'],
+                        'confidence' => $category['confidence'],
+                        'matched_bot' => $compiled['map'][strtolower($match[0])] ?? $match[0],
+                    ];
+
+                    break;
+                }
+            }
+        }
+
+        return $matches;
+    }
+
+    /**
+     * The highest-confidence match outside the excluded categories. Taking the
+     * first match instead would let "sqlmap … Googlebot" hide behind the
+     * (disabled-by-default) search engine category.
+     *
+     * @param  array<int, string>  $excludeCategories
+     * @param  array<string, int>  $confidenceOverrides  category => confidence
+     * @return array{category: string, label: string, confidence: int, matched_bot: string}|null
+     */
+    public static function findBot(string $userAgent, array $excludeCategories = [], array $confidenceOverrides = []): ?array
+    {
+        $excludeCategories = self::expandCategories($excludeCategories);
+        $best = null;
+
+        foreach (self::findAllBots($userAgent) as $match) {
+            if (in_array($match['category'], $excludeCategories, true)) {
+                continue;
+            }
+
+            if (isset($confidenceOverrides[$match['category']])) {
+                $match['confidence'] = $confidenceOverrides[$match['category']];
+            }
+
+            if ($best === null || $match['confidence'] > $best['confidence']) {
+                $best = $match;
+            }
+        }
+
+        return $best;
+    }
+
+    // Alternatives per compiled pattern: PCRE has limits on pattern size, and a pattern that
+    // fails to compile makes preg_match() return false — a category that silently never matches
+    private const TOKENS_PER_PATTERN = 400;
+
+    /**
+     * @param  array<int, string>  $bots
+     * @return array{regexes: array<int, string>, map: array<string, string>}
+     */
+    private static function compiled(string $category, array $bots): array
+    {
+        if (! isset(self::$compiled[$category])) {
+            // Longest first, so "SemrushBot-BA" wins over "SemrushBot" at the same offset
+            $tokens = $bots;
+            usort($tokens, fn (string $a, string $b) => strlen($b) <=> strlen($a));
+
+            $map = [];
+            foreach ($bots as $bot) {
+                $map[strtolower($bot)] = $bot;
+            }
+
+            $regexes = [];
+            foreach (array_chunk($tokens, self::TOKENS_PER_PATTERN) as $chunk) {
+                $regex = '/(?<![a-z0-9])(?:'.implode('|', array_map(fn (string $t) => preg_quote($t, '/'), $chunk)).')(?![a-z])/i';
+
+                if (@preg_match($regex, '') === false) {
+                    Log::warning('AI Guard: a bot signature pattern did not compile and was skipped.', ['category' => $category]);
+
+                    continue;
+                }
+
+                $regexes[] = $regex;
+            }
+
+            self::$compiled[$category] = ['regexes' => $regexes, 'map' => $map];
+        }
+
+        return self::$compiled[$category];
+    }
+
+    private static function definitions(): array
+    {
+        return [
+            // Crawlers that collect content to train models
+            'ai_training' => [
+                'label' => 'AI Training Crawler',
+                'confidence' => 95,
+                'bots' => [
+                    'GPTBot', 'ClaudeBot', 'Claude-Web', 'anthropic-ai',
+                    'CCBot', 'Bytespider', 'Diffbot', 'FacebookBot',
+                    'cohere-ai', 'cohere-training-data-crawler',
+                    'AI2Bot', 'Ai2Bot-Dolma', 'ImagesiftBot', 'Omgilibot',
+                    'Timpibot', 'Kangaroo Bot', 'meta-externalagent',
+                    'webz.io', 'Amazonbot', 'ISSCyberRiskCrawler',
+                    'FriendlyCrawler', 'Nicecrawler', 'Sidetrade indexer',
+                    'Velenpublicwebcrawler', 'img2dataset', 'ICC-Crawler',
+                    'GoogleOther',                 // Google generic R&D crawling (feeds Gemini)
+                    'DeepSeekBot',                 // DeepSeek LLM training
+                    'TikTokSpider',                // ByteDance
+                    'ToutiaoSpider',               // ByteDance news spider
+                    'PanguBot',                    // Huawei multimodal LLM
+                    'Spawning-AI',                 // Spawning AI data provenance
+                    'LAIONDownloader',             // LAION datasets
+                    'MaCoCu',                      // EU multilingual corpus
+                    'Cotoyogi',                    // ROIS Japanese LLM
+                    'TerraCotta',                  // Ceramic AI
+                    'Brightbot',                   // Bright Data LLM training
+                    'Crawl4AI',                    // Open-source AI scraping framework
+                    'FirecrawlAgent',              // Firecrawl LLM data prep
+                    'Factset_spyderbot',           // FactSet AI
+                    'SBIntuitionsBot',             // SB Intuitions
+                    'imageSpider',                 // AI image datasets
+                    'WARDBot',                     // WEBSPARK AI data
+                    'KunatoCrawler',               // Kunato AI data
+                    'MyCentralAIScraperBot',       // AI data scraper
+                    'Poseidon Research Crawler',   // AI research crawler
+                    'ChatGLM-Spider',              // ChatGLM training
+                    'Datenbank Crawler',           // AI data scraper
+                    'ApifyWebsiteContentCrawler',  // Apify AI scraping
+                    'Crawlspace',                  // Crawlspace scraping service
+                    'WRTNBot',                     // WRTN AI
+                ],
+            ],
+
+            // Crawlers that build retrieval indexes for AI answers (not training)
+            'ai_search' => [
+                'label' => 'AI Search Crawler',
+                'confidence' => 65,
+                'bots' => [
+                    'OAI-SearchBot',               // ChatGPT search index
+                    'Claude-SearchBot',            // Claude search index
+                    'PerplexityBot',               // Perplexity index
+                    'YouBot', 'PhindBot', 'KagiBot', 'BraveSearch',
+                    'Neeva', 'NeevaBot',           // legacy — Neeva shut down
+                    'DuckAssistBot',               // DuckDuckGo AI answers
+                    'AzureAI-SearchBot',           // Azure AI Search
+                    'Amzn-SearchBot',              // Amazon AI search
+                    'meta-webindexer',             // Meta AI search index
+                    'Google-CloudVertexBot',       // Vertex AI Agent Builder (owner-requested crawl)
+                    'iaskspider',                  // iAsk AI search
+                    'TavilyBot',                   // Tavily search API
+                    'LinerBot',                    // Liner research assistant
+                    'Andibot',                     // Andi AI search
+                    'Poggio-Citations',            // AI citation fetcher
+                    'bigsur.ai',                   // Big Sur AI
+                    'Cloudflare-AutoRAG',          // Cloudflare RAG indexing
+                ],
+            ],
+
+            // Fetches made live on behalf of a user (chat browsing, agents, previews)
+            'ai_agents' => [
+                'label' => 'AI Agent (user-triggered)',
+                'confidence' => 60,
+                'bots' => [
+                    'ChatGPT-User',                // ChatGPT live fetch
+                    'ChatGPT Agent',               // ChatGPT agentic browsing
+                    'ChatGPT-Browser',             // ChatGPT browsing mode
+                    'Operator',                    // OpenAI Operator
+                    'Claude-User',                 // Claude live fetch
+                    'Perplexity-User',             // Perplexity live fetch
+                    'MistralAI-User',              // Le Chat live fetch
+                    'Gemini-Deep-Research',        // Gemini Deep Research
+                    'Google-NotebookLM', 'NotebookLM',
+                    'Google-Agent',                // Google agents browsing for a user
+                    'GoogleAgent-Mariner',         // Google browser agent
+                    'GoogleAgent-Search',          // Google search agent
+                    'Bard-AI', 'Gemini-AI', 'MetaAI',
+                    'meta-externalfetcher',        // Meta AI user-initiated fetch
+                    'facebookexternalhit',         // Link previews when a user shares a URL
+                    'kagi-fetcher',                // Kagi query resolver
+                    'Amzn-User',                   // Amazon AI user fetch
+                    'NovaAct',                     // Amazon web automation agent
+                    'AmazonBuyForMe',              // Amazon shopping agent
+                    'Manus-User',                  // Manus browser agent
+                    'TwinAgent', 'Devin', 'Siri', 'Copilot', 'Thinkbot',
+                    'bedrockbot',                  // Amazon Bedrock apps
+                    'QualifiedBot', 'KlaviyoAIBot',
+                ],
+            ],
+
+            'search_engines' => [
+                'label' => 'Search Engine',
+                'confidence' => 30,
+                'bots' => [
+                    'Googlebot', 'bingbot', 'YandexBot', 'Baiduspider',
+                    'DuckDuckBot', 'Sogou', 'Exabot', 'facebot',
+                    'ia_archiver', 'Slurp', 'Applebot', 'Qwantify',
+                    'Seznam', 'Naver',
+                    'Storebot-Google', 'Google-InspectionTool', 'AdsBot-Google',
+                    'Mediapartners-Google', 'Feedfetcher-Google', 'BingPreview',
+                    'MojeekBot', 'Qwantbot', 'SeznamBot', 'Yeti', 'coccoc',
+                    '360Spider', 'mail.ru', 'YisouSpider', 'Daum', 'ZumBot',
+                    'Bravebot', 'IbouBot', 'ZanistaBot', 'LinkupBot', 'Anomura',
+                    'archive.org_bot',
+                ],
+            ],
+
+            'seo_tools' => [
+                'label' => 'SEO Tool',
+                'confidence' => 60,
+                'bots' => [
+                    'AhrefsBot', 'SemrushBot', 'MJ12bot', 'DotBot', 'BLEXBot',
+                    'DataForSeoBot', 'serpstatbot', 'Screaming Frog SEO',
+                    'MozBot', 'Moz/', 'rogerbot', 'LinkpadBot', 'MegaIndex',
+                    'BacklinkCrawler', 'SEOkicks', 'Sistrix', 'ContentKingApp',
+                    'DeepCrawl/', 'OnCrawl', 'Cognitiveseo', 'Xenu Link',
+                    'MajesticSEO', 'spbot/', 'BomboraBot', 'PetalBot',
+                    'AhrefsSiteAudit', 'SemrushBot-BA', 'SemrushBot-SI',
+                    'SemrushBot-SWA', 'SemrushBot-OCOB', 'SplitSignalBot',
+                    'SiteAuditBot', 'SerpReputationManagementAgent',
+                    'BacklinksExtendedBot', 'Seobility', 'XoviBot', 'SeolytBot',
+                    'Seekport', 'keys-so-bot', 'Morningscore', 'BrightEdge Crawler',
+                    'RankActive', 'RankActiveLinkBot', 'HEADMasterSEO', 'SEOENGBot',
+                    'Cocolyzebot', 'woorankreview', 'woobot', 'LetsearchBot',
+                    'Siteimprove', 'Sitebulb/', 'botify', 'SEOlyticsCrawler',
+                    'Konturbot', 'SenutoBot', 'URLinspectorBot',
+                ],
+            ],
+
+            'scrapers' => [
+                'label' => 'Web Scraper',
+                'confidence' => 85,
+                'bots' => [
+                    'Scrapy/', 'colly -', 'Colly/', 'HeadlessChrome', 'PhantomJS',
+                    'Puppeteer', 'Playwright/', 'Selenium/', 'WebDriver',
+                    'CasperJS', 'Splash/', 'Mechanize/', 'Nightmare/',
+                    'SimplePie/', 'Guzzle/', 'CrawlerBot', 'SpiderBot',
+                    'htmlparser/', 'WebHarvest', 'WebExtract', 'WebGrab',
+                    'HTTrack', 'SiteSucker', 'WebCopier', 'WebReaper', 'WebZIP',
+                    'WebStripper', 'WebLeacher', 'Offline Explorer', 'PageGrabber',
+                    'SiteSnagger', 'TeleportPro', 'FlashGet', 'GetRight',
+                    'GrabNet', 'NetZIP', 'WWW-Mechanize', 'LWP::Simple',
+                    'crawler4j', 'Nutch', 'heritrix', 'newspaper/', 'Embedly',
+                    'CherryPicker', 'EmailWolf', 'ExtractorPro', 'Xaldon WebSpider',
+                    // Scraping-as-a-Service platforms
+                    'ZenRows', 'ScrapingBee', 'ScraperAPI', 'Oxylabs', 'Crawlbase',
+                    'WebScrapingAPI', 'ProxyCrawl', 'ScrapFly', 'ScrapeOps', 'Zyte',
+                    'AutoScraper',
+                ],
+            ],
+
+            'bad_bots' => [
+                'label' => 'Malicious Bot',
+                'confidence' => 95,
+                'bots' => [
+                    'Nikto', 'sqlmap', 'Nessus', 'Nmap', 'Masscan', 'ZmEu',
+                    'w3af', 'Havij', 'Acunetix', 'OpenVAS', 'Burp', 'dirbuster',
+                    'gobuster', 'wpscan', 'Jorgee', 'Morfeus', 'Zgrab',
+                    // 'httpx' deliberately not listed here: it would also match the
+                    // legitimate python-httpx client library (data_harvesters, 80)
+                    'nuclei', 'subfinder', 'jaeles', 'OWASP', 'Arachni',
+                    'Skipfish', 'Wapiti', 'Vega', 'AppScan', 'NetSparker',
+                    'Shodan', 'CensysInspect', 'masscan-ng', 'Fuzz Faster U Fool',
+                    'Wfuzz', 'FHscan', 'Jbrofuzz', 'l9scan', 'l9explore',
+                    'l9tcpid', 'leakix', 'Webshag', 'Nimbostratus', 'muhstik-scan',
+                    'T0PHackTeam', 'scan.lol', 'probely.com', 'cyberscan.io',
+                    'Hardenize', 'NetSystemsResearch', 'InternetMeasurement',
+                    'DomainCrawler', 'DomainStatsBot', 'BackDoorBot', 'Black Hole',
+                    'Zeus', 'Siphon', 'Vacuum',
+                ],
+            ],
+
+            'data_harvesters' => [
+                'label' => 'Data Harvester',
+                'confidence' => 80,
+                'bots' => [
+                    'curl', 'python-requests', 'Go-http-client', 'Java/',
+                    'libwww-perl', 'Wget', 'HTTPie', 'axios', 'node-fetch',
+                    'http_request2', 'pycurl', 'aiohttp', 'httpx', 'urllib',
+                    'requests/', 'python-httpx', 'Python-httplib2', 'okhttp',
+                    'Apache-HttpClient', 'Apache-HttpAsyncClient', 'RestSharp',
+                    'Typhoeus', 'Faraday', 'hackney', 'reqwest', 'fasthttp',
+                    'lua-resty-http', 'Zend_Http_Client', 'GuzzleHttp',
+                    'PostmanRuntime', 'insomnia/', 'http.rb', 'libcurl',
+                    'node-superagent', 'node-urllib', 'php-requests', 'http-kit',
+                    'Mojolicious', 'lwp-request', 'Dispatch/', 'unirest-java',
+                    'UniversalFeedParser', 'phpcrawl', 'Symfony BrowserKit',
+                    'colly',
+                ],
+            ],
+        ];
     }
 }

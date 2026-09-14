@@ -9,6 +9,10 @@ class RobotsTxtEnforcer
 {
     private array $config;
 
+    private ?RobotsTxtParser $parser = null;
+
+    private ?string $parsedContent = null;
+
     public function __construct(array $config)
     {
         $this->config = $config;
@@ -24,29 +28,30 @@ class RobotsTxtEnforcer
             return $this->buildEmptyResult();
         }
 
-        $disallowedPaths = $this->getDisallowedPaths($botInfo['matched_bot']);
-
-        if (empty($disallowedPaths)) {
+        $parser = $this->getParser();
+        if ($parser === null) {
             return $this->buildEmptyResult();
         }
 
         $requestPath = '/'.ltrim($request->path(), '/');
-
-        foreach ($disallowedPaths as $disallowed) {
-            if ($this->pathMatches($requestPath, $disallowed)) {
-                $boostAmount = $this->config['robots_txt']['confidence_boost'] ?? 30;
-
-                return [
-                    'detected' => true,
-                    'threat_type' => 'robots_txt_violation',
-                    'threat_source' => $botInfo['matched_bot'],
-                    'confidence_score' => $boostAmount,
-                    'matched_pattern' => "robots.txt disallow: {$disallowed}",
-                ];
-            }
+        $query = $request->getQueryString();
+        if ($query !== null && $query !== '') {
+            $requestPath .= '?'.$query;
         }
 
-        return $this->buildEmptyResult();
+        $result = $parser->check($botInfo['matched_bot'], $requestPath);
+
+        if ($result['allowed'] || $result['rule'] === null) {
+            return $this->buildEmptyResult();
+        }
+
+        return [
+            'detected' => true,
+            'threat_type' => 'robots_txt_violation',
+            'threat_source' => $botInfo['matched_bot'],
+            'confidence_score' => $this->config['robots_txt']['confidence_boost'] ?? 30,
+            'matched_pattern' => 'robots.txt disallow: '.$result['rule']['path'],
+        ];
     }
 
     public function isEnabled(): bool
@@ -54,25 +59,45 @@ class RobotsTxtEnforcer
         return $this->config['robots_txt']['enabled'] ?? false;
     }
 
+    /**
+     * Disallow rules that apply to the bot (its own group, or "*" when it has none).
+     */
     public function getDisallowedPaths(?string $botName = null): array
     {
-        $robotsContent = $this->getRobotsContent();
+        $parser = $this->getParser();
 
-        if ($robotsContent === '') {
+        if ($parser === null) {
             return [];
         }
 
-        return $this->parseDisallowRules($robotsContent, $botName);
+        return $parser->disallowedPaths($botName ?? '*');
+    }
+
+    private function getParser(): ?RobotsTxtParser
+    {
+        $content = $this->getRobotsContent();
+
+        if ($content === '') {
+            return null;
+        }
+
+        if ($this->parser === null || $this->parsedContent !== $content) {
+            $this->parser = new RobotsTxtParser($content);
+            $this->parsedContent = $content;
+        }
+
+        return $this->parser;
     }
 
     private function getRobotsContent(): string
     {
         $cacheMinutes = $this->config['robots_txt']['cache_minutes'] ?? 60;
+        $robotsPath = $this->config['robots_txt']['path'] ?? null;
 
         // A missing file is cached as '' — Cache::remember does not store null,
         // which would re-read the filesystem on every request
-        return Cache::remember('ai-guard:robots-txt', $cacheMinutes * 60, function () {
-            $robotsPath = public_path('robots.txt');
+        return Cache::remember('ai-guard:robots-txt', $cacheMinutes * 60, function () use ($robotsPath) {
+            $robotsPath ??= public_path('robots.txt');
 
             if (! file_exists($robotsPath)) {
                 return '';
@@ -82,56 +107,6 @@ class RobotsTxtEnforcer
 
             return $content !== false ? $content : '';
         });
-    }
-
-    private function parseDisallowRules(string $content, ?string $botName): array
-    {
-        $lines = explode("\n", $content);
-        $disallowed = [];
-        $isRelevantAgent = false;
-
-        foreach ($lines as $line) {
-            $line = trim($line);
-
-            if ($line === '' || str_starts_with($line, '#')) {
-                continue;
-            }
-
-            if (stripos($line, 'User-agent:') === 0) {
-                $agent = trim(substr($line, 11));
-                $isRelevantAgent = ($agent === '*');
-
-                if ($botName !== null && stripos($agent, $botName) !== false) {
-                    $isRelevantAgent = true;
-                }
-
-                continue;
-            }
-
-            if ($isRelevantAgent && stripos($line, 'Disallow:') === 0) {
-                $path = trim(substr($line, 9));
-                if ($path !== '') {
-                    $disallowed[] = $path;
-                }
-            }
-        }
-
-        return array_unique($disallowed);
-    }
-
-    private function pathMatches(string $requestPath, string $disallowedPath): bool
-    {
-        if ($disallowedPath === '/') {
-            return true;
-        }
-
-        if (str_ends_with($disallowedPath, '*')) {
-            $prefix = rtrim($disallowedPath, '*');
-
-            return str_starts_with($requestPath, $prefix);
-        }
-
-        return str_starts_with($requestPath, $disallowedPath);
     }
 
     private function buildEmptyResult(): array

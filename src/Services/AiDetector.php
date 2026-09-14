@@ -23,7 +23,7 @@ class AiDetector
     {
         $results = [];
 
-        // Categorized bot signature detection (150+ bots)
+        // Categorized bot signature detection
         $botResult = $this->detectCategorizedBot($request);
         if ($botResult['detected']) {
             $results[] = $botResult;
@@ -67,33 +67,16 @@ class AiDetector
             return $this->buildEmptyResult();
         }
 
-        $botInfo = BotSignatures::findBot($userAgent);
+        $botInfo = BotSignatures::findBot($userAgent, $this->excludedCategories(), $this->confidenceOverrides());
 
         if ($botInfo === null) {
             return $this->buildEmptyResult();
         }
 
-        // Check if this category is explicitly disabled
-        $disabledCategories = $this->config['bot_signatures']['disabled_categories'] ?? ['search_engines'];
-        if (in_array($botInfo['category'], $disabledCategories, true)) {
-            return $this->buildEmptyResult();
-        }
-
-        // Respect feature-level toggles: if ai_crawlers is disabled, skip AI bot categories
-        if (in_array($botInfo['category'], ['ai_training', 'ai_assistants'], true)
-            && ! ($this->config['ai_crawlers']['enabled'] ?? true)) {
-            return $this->buildEmptyResult();
-        }
-
-        // If data_harvesters is disabled, skip harvester category
-        if ($botInfo['category'] === 'data_harvesters'
-            && ! ($this->config['data_harvesters']['enabled'] ?? true)) {
-            return $this->buildEmptyResult();
-        }
-
-        // Map category to threat type
+        // Map category to threat type — all three AI categories stay 'ai_crawler';
+        // the purpose is recorded separately as bot_category
         $threatType = match ($botInfo['category']) {
-            'ai_training', 'ai_assistants' => 'ai_crawler',
+            'ai_training', 'ai_search', 'ai_agents' => 'ai_crawler',
             'seo_tools' => 'seo_bot',
             'scrapers' => 'scraper',
             'bad_bots' => 'bad_bot',
@@ -116,8 +99,16 @@ class AiDetector
     public function detectAiCrawler(Request $request): array
     {
         $userAgent = $request->userAgent() ?? '';
+        $signaturesEnabled = $this->config['bot_signatures']['enabled'] ?? true;
 
         foreach ($this->crawlerPatterns as $pattern) {
+            // Tokens the signature database knows are scored by their category —
+            // a flat 95 here would override seo_tools/scrapers scoring and ignore
+            // disabled_categories
+            if ($signaturesEnabled && BotSignatures::isKnownToken($pattern)) {
+                continue;
+            }
+
             if (stripos($userAgent, $pattern) !== false) {
                 return [
                     'detected' => true,
@@ -153,11 +144,13 @@ class AiDetector
         if ($this->config['data_harvesters']['check_accept_language'] ?? false) {
             $acceptLanguage = $request->header('Accept-Language');
 
-            if (empty($acceptLanguage)) {
+            // A missing Accept-Language adds weight to something already suspicious, but on its
+            // own it is not a finding: health checks, uptime monitors, sendBeacon and most
+            // server-to-server calls send no Accept-Language, and logging every one of them as a
+            // threat with no source fills the log with noise.
+            if (empty($acceptLanguage) && $result['detected']) {
                 $result['confidence_score'] = min($result['confidence_score'] + 20, 100);
-                $result['detected'] = true;
-                $result['threat_type'] = $result['threat_type'] ?? 'data_harvester';
-                $result['matched_pattern'] = $result['matched_pattern'] ?? 'missing_accept_language';
+                $result['matched_pattern'] = ($result['matched_pattern'] ?? 'data_harvester').', missing_accept_language';
             }
         }
 
@@ -188,7 +181,37 @@ class AiDetector
     {
         $userAgent = $request->userAgent() ?? '';
 
-        return BotSignatures::findBot($userAgent);
+        return BotSignatures::findBot($userAgent, $this->excludedCategories());
+    }
+
+    /**
+     * Categories switched off by bot_signatures.disabled_categories or by a feature toggle.
+     *
+     * @return array<int, string>
+     */
+    private function excludedCategories(): array
+    {
+        $excluded = $this->config['bot_signatures']['disabled_categories'] ?? ['search_engines'];
+
+        if (! ($this->config['ai_crawlers']['enabled'] ?? true)) {
+            array_push($excluded, ...BotSignatures::AI_CATEGORIES);
+        }
+
+        if (! ($this->config['data_harvesters']['enabled'] ?? true)) {
+            $excluded[] = 'data_harvesters';
+        }
+
+        return BotSignatures::expandCategories($excluded);
+    }
+
+    /**
+     * bot_signatures.confidence: per-category score overrides (the per-purpose policy).
+     *
+     * @return array<string, int>
+     */
+    private function confidenceOverrides(): array
+    {
+        return BotSignatures::confidenceOverrides($this->config);
     }
 
     public function getDetectorInfo(): array

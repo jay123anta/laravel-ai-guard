@@ -59,10 +59,11 @@ class AiDetectorTest extends TestCase
         $this->assertSame(95, $result['confidence_score']);
         $this->assertSame('GPTBot', $result['matched_pattern']);
 
-        // Step 3: Verify individual detector also works
-        $crawlerResult = $this->detector->detectAiCrawler($request);
-        $this->assertTrue($crawlerResult['detected']);
-        $this->assertSame($result['threat_type'], $crawlerResult['threat_type']);
+        // Step 3: The categorized database scores it; the legacy list skips known tokens
+        $botResult = $this->detector->detectCategorizedBot($request);
+        $this->assertTrue($botResult['detected']);
+        $this->assertSame('ai_training', $botResult['bot_category']);
+        $this->assertFalse($this->detector->detectAiCrawler($request)['detected']);
 
         // Step 4: Verify this request is NOT a data harvester
         $harvesterResult = $this->detector->detectDataHarvester($request);
@@ -74,18 +75,19 @@ class AiDetectorTest extends TestCase
 
     public function test_full_cycle_all_ai_crawlers_detected(): void
     {
+        // user-agent => [source, bot_category, confidence]
         $crawlers = [
-            'GPTBot/1.0' => 'GPTBot',
-            'ChatGPT-User' => 'ChatGPT-User',
-            'ClaudeBot/1.0' => 'ClaudeBot',
-            'anthropic-ai/1.0' => 'anthropic-ai',
-            'CCBot/2.0 (https://commoncrawl.org)' => 'CCBot',
-            'PerplexityBot/1.0' => 'PerplexityBot',
-            'Mozilla/5.0 (compatible; Bytespider)' => 'Bytespider',
-            'Diffbot/0.1' => 'Diffbot',
+            'GPTBot/1.0' => ['GPTBot', 'ai_training', 95],
+            'ChatGPT-User' => ['ChatGPT-User', 'ai_agents', 60],
+            'ClaudeBot/1.0' => ['ClaudeBot', 'ai_training', 95],
+            'anthropic-ai/1.0' => ['anthropic-ai', 'ai_training', 95],
+            'CCBot/2.0 (https://commoncrawl.org)' => ['CCBot', 'ai_training', 95],
+            'PerplexityBot/1.0' => ['PerplexityBot', 'ai_search', 65],
+            'Mozilla/5.0 (compatible; Bytespider)' => ['Bytespider', 'ai_training', 95],
+            'Diffbot/0.1' => ['Diffbot', 'ai_training', 95],
         ];
 
-        foreach ($crawlers as $userAgent => $expectedSource) {
+        foreach ($crawlers as $userAgent => [$expectedSource, $expectedCategory, $expectedScore]) {
             $request = Request::create('/test', 'GET', [], [], [], [
                 'HTTP_USER_AGENT' => $userAgent,
                 'HTTP_ACCEPT_LANGUAGE' => 'en',
@@ -96,7 +98,8 @@ class AiDetectorTest extends TestCase
             $this->assertTrue($result['detected'], "Failed to detect: {$userAgent}");
             $this->assertSame('ai_crawler', $result['threat_type'], "Wrong type for: {$userAgent}");
             $this->assertSame($expectedSource, $result['threat_source'], "Wrong source for: {$userAgent}");
-            $this->assertSame(95, $result['confidence_score'], "Wrong score for: {$userAgent}");
+            $this->assertSame($expectedCategory, $result['bot_category'], "Wrong category for: {$userAgent}");
+            $this->assertSame($expectedScore, $result['confidence_score'], "Wrong score for: {$userAgent}");
         }
     }
 
@@ -160,7 +163,8 @@ class AiDetectorTest extends TestCase
 
     public function test_full_cycle_missing_accept_language_only(): void
     {
-        // A browser-like UA with no Accept-Language triggers low-confidence harvester detection
+        // Health checks, uptime monitors and server-to-server calls send no Accept-Language:
+        // on its own that is not a finding, only weight for something already suspicious.
         // Request::create adds a default Accept-Language, so we must explicitly clear it
         $request = Request::create('/test', 'GET', [], [], [], [
             'HTTP_USER_AGENT' => 'SomeUnknownAgent/1.0',
@@ -169,11 +173,23 @@ class AiDetectorTest extends TestCase
 
         $result = $this->detector->detect($request);
 
-        // Missing Accept-Language alone adds 20
+        $this->assertFalse($result['detected']);
+        $this->assertSame(0, $result['confidence_score']);
+    }
+
+    public function test_full_cycle_missing_accept_language_adds_to_a_harvester(): void
+    {
+        $request = Request::create('/test', 'GET', [], [], [], [
+            'HTTP_USER_AGENT' => 'python-requests/2.31.0',
+            'HTTP_ACCEPT_LANGUAGE' => '',
+        ]);
+
+        $result = $this->detector->detect($request);
+
         $this->assertTrue($result['detected']);
         $this->assertSame('data_harvester', $result['threat_type']);
-        $this->assertSame(20, $result['confidence_score']);
-        $this->assertSame('missing_accept_language', $result['matched_pattern']);
+        $this->assertSame(100, $result['confidence_score'], '80 for the harvester, plus 20');
+        $this->assertStringContainsString('missing_accept_language', $result['matched_pattern']);
     }
 
     // -------------------------------------------------------------------------
@@ -328,6 +344,80 @@ class AiDetectorTest extends TestCase
     // -------------------------------------------------------------------------
     // Full Cycle: Empty/Null User Agent
     // -------------------------------------------------------------------------
+
+    public function test_search_engine_name_does_not_mask_other_categories(): void
+    {
+        $request = Request::create('/test', 'GET', [], [], [], [
+            'HTTP_USER_AGENT' => 'sqlmap/1.8#stable (compatible; Googlebot/2.1)',
+            'HTTP_ACCEPT_LANGUAGE' => 'en',
+        ]);
+
+        $result = $this->detector->detect($request);
+
+        $this->assertTrue($result['detected']);
+        $this->assertSame('bad_bot', $result['threat_type']);
+        $this->assertSame(95, $result['confidence_score']);
+        $this->assertSame('bad_bots', $this->detector->getBotInfo($request)['category']);
+    }
+
+    private function detectUa(AiDetector $detector, string $userAgent): array
+    {
+        return $detector->detect(Request::create('/test', 'GET', [], [], [], [
+            'HTTP_USER_AGENT' => $userAgent,
+            'HTTP_ACCEPT_LANGUAGE' => 'en',
+        ]));
+    }
+
+    public function test_confidence_overrides_set_per_purpose_policy(): void
+    {
+        $config = $this->config;
+        $config['bot_signatures'] = ['confidence' => ['ai_agents' => 90, 'ai_assistants' => 88]];
+        $detector = new AiDetector($config);
+
+        // The v2 alias expands to both categories; the explicit ai_agents key is applied first
+        $this->assertSame(88, $this->detectUa($detector, 'ChatGPT-User/1.0')['confidence_score']);
+        $this->assertSame(88, $this->detectUa($detector, 'PerplexityBot/1.0')['confidence_score']);
+        $this->assertSame(95, $this->detectUa($detector, 'GPTBot/1.1')['confidence_score']);
+    }
+
+    public function test_ai_assistants_alias_disables_search_and_agents(): void
+    {
+        $config = $this->config;
+        $config['bot_signatures'] = ['disabled_categories' => ['search_engines', 'ai_assistants']];
+        $detector = new AiDetector($config);
+
+        $this->assertFalse($this->detectUa($detector, 'PerplexityBot/1.0')['detected']);
+        $this->assertFalse($this->detectUa($detector, 'Claude-User/1.0')['detected']);
+        $this->assertSame('ai_training', $this->detectUa($detector, 'ClaudeBot/1.0')['bot_category']);
+    }
+
+    public function test_legacy_list_defers_known_tokens_to_their_category(): void
+    {
+        $config = $this->config;
+        $config['ai_crawlers']['user_agents'] = ['DataForSeoBot', 'AcmeInternalAI'];
+        $detector = new AiDetector($config);
+
+        // Known token — scored as the SEO tool it is, not a 95 "AI crawler"
+        $seo = $this->detectUa($detector, 'Mozilla/5.0 (compatible; DataForSeoBot/1.0)');
+        $this->assertSame('seo_bot', $seo['threat_type']);
+        $this->assertSame(60, $seo['confidence_score']);
+
+        // Unknown custom token — still flagged by the legacy list
+        $custom = $this->detectUa($detector, 'AcmeInternalAI/2.0');
+        $this->assertSame('ai_crawler', $custom['threat_type']);
+        $this->assertSame(95, $custom['confidence_score']);
+    }
+
+    public function test_disabled_seo_category_is_not_overridden_by_legacy_list(): void
+    {
+        $config = $this->config;
+        $config['ai_crawlers']['user_agents'] = ['DataForSeoBot', 'PetalBot'];
+        $config['bot_signatures'] = ['disabled_categories' => ['search_engines', 'seo_tools']];
+        $detector = new AiDetector($config);
+
+        $this->assertFalse($this->detectUa($detector, 'DataForSeoBot/1.0')['detected']);
+        $this->assertFalse($this->detectUa($detector, 'PetalBot')['detected']);
+    }
 
     public function test_full_cycle_null_user_agent(): void
     {

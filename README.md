@@ -318,7 +318,7 @@ Parses your robots.txt per RFC 9309 — grouped `User-agent` lines, `Allow` rule
 ],
 ```
 
-Header signals: missing browser headers, alphabetical header order, anomalous Accept header, no keep-alive, no navigation context.
+Header signals: missing browser headers (only ones every current engine sends — Chromium-only `Sec-CH-UA*` and HTTP/2-forbidden `Connection` are not counted, so Firefox and Safari are not scored as suspicious for lacking them), alphabetical header order, anomalous Accept header, an explicit `Connection: close`, and no navigation context.
 
 **Edge fingerprints.** A client's JA4 TLS fingerprint is hard to fake with a user-agent string. CloudFront sends it as `CloudFront-Viewer-JA4-Fingerprint`; on Cloudflare, add a request header transform rule (`cf-ja4` = `cf.bot_management.ja4`, and `cf-bot-score` = `cf.bot_management.score`). A request claiming a browser whose JA4 shows no SNI, no TLS 1.3, or HTTP/1.1-first ALPN is flagged, as is any fingerprint you list in `client_ja4`. Because anyone can send these headers, they are only read from requests that came through a [trusted proxy](https://laravel.com/docs/requests#configuring-trusted-proxies).
 
@@ -498,6 +498,17 @@ Record what a call actually used, so budgets and cost tracking stay accurate:
 AiGuard::recordUsage($response->usage->inputTokens, $response->usage->outputTokens, 'claude-sonnet-5');
 ```
 
+Behind the `ai-guard.llm` middleware, the input was already reserved when the request came in. Tell `recordUsage()` how much, or the input is counted against the quota twice:
+
+```php
+AiGuard::recordUsage(
+    $response->usage->inputTokens,
+    $response->usage->outputTokens,
+    'claude-sonnet-5',
+    reservedInputTokens: AiGuard::estimateTokens($prompt),   // what the middleware reserved
+);
+```
+
 The same checks are available directly: `AiGuard::checkBudget()` (or `consumeBudget()`, which reserves the estimate as it checks — what the middleware uses, so simultaneous calls cannot each pass the same check), `moderate()`, `checkTopic()`, and `observeConversation()`.
 
 ### Redact personal data, restore it in the reply
@@ -604,11 +615,11 @@ if ($decision->requiresApproval()) { /* ask a person, then: */ $token = AiGuard:
 $result = AiGuard::inspectToolResult('fetch_page', $page, scope: $conversationId);   // scanned; spotlighted when untrusted
 ```
 
-- **Roles**, a **JSON Schema** for the arguments, and **authorize callbacks** (`ToolFirewall::define('refund', ['authorize' => fn ($args, $user) => ...])`)
-- **Egress allow-list** — URLs and email addresses in an egress tool's arguments must be on `egress_domains`
+- **Roles**, a **JSON Schema** for the arguments, and **authorize callbacks** (`ToolFirewall::define('refund', ['authorize' => fn ($args, $user) => ...])`). The supported subset covers types, enums, string and numeric rules, arrays, objects, and `allOf`/`anyOf`/`oneOf`/`not`; a keyword it cannot check (`$ref`, `patternProperties`, …) denies the call rather than letting the argument through unchecked
+- **Egress allow-list** — URLs and email addresses in an egress tool's arguments must be on `egress_domains`, found wherever they hide: nested values, array keys, `mailto:` addresses, and URL shapes only a browser resolves (`https:/host`, `//host`, backslashes)
 - **Taint tracking** — once untrusted content (a fetched page, an email, a flagged tool result) enters the conversation, write and egress tools need a person's approval (or are refused with `tainted_action => 'block'`)
-- **Approval tokens** — signed, single-use, and bound to the tool, the exact arguments, and the user
-- A **cap on tool calls** per conversation
+- **Approval tokens** — signed, single-use, and bound to the tool, the exact arguments, and the user. Signing needs an `APP_KEY`; without one, minting an approval fails rather than falling back to a guessable key
+- A **cap on tool calls** per conversation, counted across the whole conversation rather than one request
 
 Refusals are logged as `tool_call_blocked` and held calls as `tool_call_held`.
 
@@ -620,7 +631,9 @@ Refusals are logged as `tool_call_blocked` and held calls as `tool_call_held`.
 Mcp::web('/mcp', AppServer::class)->middleware(['auth:sanctum', 'ai-guard.mcp']);
 ```
 
-Every `tools/call` is scanned and checked against the tool policies above. A refused call gets a JSON-RPC error; a call that needs approval gets error `-32002`, and the client retries with the token from `AiGuard::approveToolCall()` in an `X-AI-Guard-Approval` header. Results are scanned, and a poisoned result taints the MCP session.
+Every `tools/call` is scanned and checked against the tool policies above — decided from the decoded JSON-RPC body, not the `Content-Type`. A refused call gets a JSON-RPC error; a call that needs approval gets error `-32002`, and the client retries with the token from `AiGuard::approveToolCall()` in an `X-AI-Guard-Approval` header.
+
+Results are scanned (including event-stream responses) and a poisoned result taints the MCP session. A tool whose policy sets `untrusted_output` taints the session as soon as it is called, so a result that comes back over a stream this middleware cannot read still guards the calls that follow it. The session is keyed to the authenticated client, not to the `MCP-Session-Id` it sends.
 
 **Servers you use.** Before handing an MCP server's tools to an agent:
 

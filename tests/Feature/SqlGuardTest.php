@@ -119,6 +119,32 @@ class SqlGuardTest extends TestCase
         $this->assertSame(['orders', 'shop.products'], $allowed['tables']);
     }
 
+    public function test_bracketed_aliased_and_applied_table_references_are_seen(): void
+    {
+        $options = ['allowed_tables' => ['orders']];
+
+        foreach ([
+            'SELECT * FROM [secrets]',
+            'SELECT * FROM orders, [secrets]',
+            'SELECT * FROM (secrets s)',
+            'SELECT * FROM (secrets AS s)',
+            'SELECT * FROM ((secrets) s)',
+            'SELECT * FROM ((secrets s))',
+            'SELECT * FROM orders CROSS APPLY secrets',
+            'SELECT * FROM orders OUTER APPLY secrets',
+        ] as $sql) {
+            $this->assertSame('table not allowed: secrets', AiGuard::checkSql($sql, $options)['matched_pattern'], $sql);
+        }
+
+        // Bracketed names that are allowed still resolve, schema qualifier and all
+        $allowed = AiGuard::checkSql('SELECT * FROM [orders] o JOIN [shop].[products] p ON p.id = o.pid', ['allowed_tables' => ['orders', 'shop.products']]);
+        $this->assertFalse($allowed['detected'], (string) $allowed['matched_pattern']);
+        $this->assertSame(['orders', 'shop.products'], $allowed['tables']);
+
+        // An array subscript is not an identifier
+        $this->assertSame(['orders'], AiGuard::checkSql('SELECT arr[1] FROM orders', $options)['tables']);
+    }
+
     public function test_a_common_table_expression_only_stands_for_itself_after_its_own_body(): void
     {
         $options = ['allowed_tables' => ['orders']];

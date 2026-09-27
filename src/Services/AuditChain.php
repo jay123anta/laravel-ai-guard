@@ -3,10 +3,12 @@
 namespace JayAnta\AiGuard\Services;
 
 use Illuminate\Contracts\Cache\LockTimeoutException;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use JayAnta\AiGuard\Models\AiThreatLog;
 use JayAnta\AiGuard\Support\CanonicalJson;
 use RuntimeException;
@@ -42,12 +44,23 @@ class AuditChain
     public function append(array $attributes): AiThreatLog
     {
         $write = function () use ($attributes): AiThreatLog {
-            $previous = (string) AiThreatLog::query()->whereNotNull('chain_hash')->orderByDesc('id')->value('chain_hash');
+            $tail = AiThreatLog::query()->whereNotNull('chain_hash')->orderByDesc('id')->first(['id', 'chain_hash']);
+            $previous = $tail !== null ? (string) $tail->getAttribute('chain_hash') : '';
+            $head = $this->head();
 
-            // With the table empty, the last pruned row is what the next one links to — the same
-            // predecessor verify() looks for. Sealing against genesis instead would leave a chain
-            // that can never verify again after a prune deleted every row.
-            if ($previous === '') {
+            if ($head !== null && ($tail === null || (int) $tail->getKey() < $head['id'])) {
+                // Rows the signed head says exist are gone from the database. Link to the head,
+                // not to what is left: linking to the remaining tail would seal over the gap, and
+                // the deletion would verify clean from then on.
+                Log::warning('AI Guard: the audit chain is missing rows after its last signed head; the next row keeps the gap detectable.', [
+                    'head' => $head['id'],
+                    'database_tail' => $tail?->getKey(),
+                ]);
+
+                $previous = $head['hash'];
+            } elseif ($previous === '') {
+                // With the table empty after a prune, the last pruned row is what the next one
+                // links to — the same predecessor verify() looks for
                 $anchor = $this->anchor();
                 $previous = $anchor !== null ? $anchor['hash'] : '';
             }
@@ -168,6 +181,25 @@ class AuditChain
     private function result(int $checked, ?int $first, ?int $last, ?int $brokenAt, ?string $reason): array
     {
         return ['checked' => $checked, 'first' => $first, 'last' => $last, 'broken_at' => $brokenAt, 'reason' => $reason];
+    }
+
+    /**
+     * Record a deliberate deletion (a prune or an API flush) before it runs: the newest chained
+     * row about to go becomes the anchor the first remaining row, or the next new one, links to.
+     *
+     * @param  Builder<AiThreatLog>  $rows  The rows about to be deleted, oldest first
+     */
+    public function anchorDeletion(Builder $rows): void
+    {
+        if (! Schema::hasColumn('ai_threat_logs', 'chain_hash')) {
+            return;
+        }
+
+        $last = $rows->clone()->whereNotNull('chain_hash')->orderByDesc('id')->first();
+
+        if ($last !== null) {
+            $this->saveAnchor((int) $last->getKey(), (string) $last->getAttribute('chain_hash'));
+        }
     }
 
     /**

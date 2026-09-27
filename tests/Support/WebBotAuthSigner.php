@@ -30,7 +30,7 @@ class WebBotAuthSigner
     }
 
     /**
-     * @param  array{created?: int, expires?: int, nonce?: string, label?: string, keyid?: string, agent_header?: string}  $options
+     * @param  array{created?: int, expires?: int, nonce?: string, label?: string, keyid?: string, agent_header?: string, components?: array<int, string>, target_uri?: string}  $options
      * @return array<string, string>
      */
     public static function headers(string $secretKey, string $publicKey, string $authority, string $agent = 'https://chatgpt.com', array $options = []): array
@@ -40,15 +40,24 @@ class WebBotAuthSigner
         $label = $options['label'] ?? 'sig1';
         $keyid = $options['keyid'] ?? self::keyid($publicKey);
         $agentHeader = $options['agent_header'] ?? '"'.$agent.'"';
+        $components = $options['components'] ?? ['@authority', 'signature-agent'];
 
         $params = ';created='.$created.';keyid="'.$keyid.'";alg="ed25519";expires='.$expires
             .(isset($options['nonce']) ? ';nonce="'.$options['nonce'].'"' : '')
             .';tag="web-bot-auth"';
-        $inner = '("@authority" "signature-agent")'.$params;
+        $inner = '('.implode(' ', array_map(fn (string $c) => '"'.$c.'"', $components)).')'.$params;
 
-        $base = '"@authority": '.$authority."\n"
-            .'"signature-agent": '.$agentHeader."\n"
-            .'"@signature-params": '.$inner;
+        $values = [
+            '@authority' => $authority,
+            '@target-uri' => $options['target_uri'] ?? 'http://'.$authority.'/page',
+            'signature-agent' => $agentHeader,
+        ];
+
+        $base = '';
+        foreach ($components as $component) {
+            $base .= '"'.$component.'": '.$values[$component]."\n";
+        }
+        $base .= '"@signature-params": '.$inner;
 
         return [
             'Signature-Agent' => $agentHeader,

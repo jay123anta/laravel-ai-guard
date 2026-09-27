@@ -67,4 +67,30 @@ class SensitiveDataPatternsTest extends TestCase
 
         $this->assertSame($text, SensitiveDataPatterns::redact($text));
     }
+
+    public function test_common_secret_assignments_are_redacted(): void
+    {
+        foreach ([
+            'DB_PASSWORD=AbCdEf0123456789XyZ',
+            'AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+            '{"password": "Tr0ub4dor&3-horse!"}',
+            'Authorization: token '.str_repeat('a1b2c3d4e5', 4),
+            'private_token: glpat-'.str_repeat('Ab3x', 5),
+        ] as $text) {
+            $this->assertStringContainsString('[REDACTED:', SensitiveDataPatterns::redact($text), $text);
+        }
+    }
+
+    public function test_retina_asset_names_are_not_email_addresses(): void
+    {
+        // "@2x" is an image density suffix, not an address — with or without a path in front
+        foreach (['/img/logo@2x.png', 'https://cdn.example.com/a/icon@3x.webp', 'logo@2x.png', 'Use hero@2x.jpg here', 'url(icon@3x.webp)', 'srcset="logo@1.5x.png 2x"'] as $path) {
+            $this->assertSame($path, SensitiveDataPatterns::redact($path), $path);
+        }
+
+        // Real addresses, including one-character local parts and ones after punctuation, still are
+        foreach (['a@example.com', 'Write to (jane@example.com).', 'mailto:ops@example.com'] as $text) {
+            $this->assertStringContainsString('[REDACTED:email]', SensitiveDataPatterns::redact($text), $text);
+        }
+    }
 }

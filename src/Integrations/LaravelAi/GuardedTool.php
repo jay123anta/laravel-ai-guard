@@ -8,8 +8,12 @@ use JayAnta\AiGuard\Services\ToolFirewall;
 use JayAnta\AiGuard\Support\CanonicalJson;
 use JayAnta\AiGuard\Support\ToolDecision;
 use Laravel\Ai\Approvals\Approval;
+use Laravel\Ai\Contracts\Agent;
 use Laravel\Ai\Contracts\Approvable;
 use Laravel\Ai\Contracts\Tool;
+use Laravel\Ai\Providers\Tools\ToolSearch;
+use Laravel\Ai\Tools\AgentTool;
+use Laravel\Ai\Tools\McpServerTool;
 use Laravel\Ai\Tools\McpTool;
 use Laravel\Ai\Tools\Request;
 use Laravel\Ai\Tools\ToolNameResolver;
@@ -51,16 +55,35 @@ class GuardedTool implements Approvable, Tool
         $wrapped = [];
 
         foreach ($tools as $tool) {
-            if (class_exists(McpTool::class) && McpTool::supports($tool)) {
-                $tool = new McpTool($tool);
-            }
-
-            $wrapped[] = $tool instanceof Tool && ! $tool instanceof self
-                ? new self($tool, $scope ?? TaintTracker::REQUEST_SCOPE, $user)
-                : $tool;
+            $wrapped[] = self::wrap($tool, $scope ?? TaintTracker::REQUEST_SCOPE, $user);
         }
 
         return $wrapped;
+    }
+
+    /**
+     * Mirrors laravel/ai's own tool resolution (Agent → Tool → ToolSearch → MCP client → MCP
+     * server). laravel/ai turns sub-agents, searchable tools and MCP server tools into Tool objects
+     * only after tools() has returned, so anything this method leaves unconverted would run with
+     * no firewall, no result scan and no taint.
+     */
+    private static function wrap(mixed $tool, string $scope, ?object $user): mixed
+    {
+        if ($tool instanceof self) {
+            return $tool;
+        }
+
+        if (interface_exists(Agent::class) && class_exists(AgentTool::class) && $tool instanceof Agent) {
+            $tool = new AgentTool($tool);
+        } elseif (! $tool instanceof Tool && class_exists(ToolSearch::class) && $tool instanceof ToolSearch) {
+            return $tool->withTools(array_map(fn ($nested) => self::wrap($nested, $scope, $user), $tool->tools));
+        } elseif (! $tool instanceof Tool && class_exists(McpTool::class) && McpTool::supports($tool)) {
+            $tool = new McpTool($tool);
+        } elseif (! $tool instanceof Tool && class_exists(McpServerTool::class) && McpServerTool::supports($tool)) {
+            $tool = new McpServerTool($tool);
+        }
+
+        return $tool instanceof Tool ? new self($tool, $scope, $user) : $tool;
     }
 
     public function inner(): Tool

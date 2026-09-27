@@ -227,8 +227,9 @@ class SqlGuard
                 continue;
             }
 
-            if ($char === '"' || $char === '`') {
-                $end = strpos($sql, $char, $i + 1);
+            // "name", `name`, and the [name] SQLite and SQL Server also accept
+            if ($char === '"' || $char === '`' || $char === '[') {
+                $end = strpos($sql, $char === '[' ? ']' : $char, $i + 1);
                 if ($end === false) {
                     // Everything after would be swallowed here but executed by the database
                     $problem = 'unterminated quoted identifier';
@@ -313,13 +314,14 @@ class SqlGuard
 
         $identifier = '(?:[a-z_][\w$]*\.)?[a-z_][\w$]*';
 
-        // "FROM (users)", "FROM ((users))" and "FROM a, (users)" are table references, not
-        // subqueries: take the parentheses off a bare name so it is seen. A parenthesis holding
-        // a SELECT never matches. The replacement keeps the string length, so the offsets the
-        // common table expressions were recorded at still line up.
+        // "FROM (users)", "FROM ((users))", "FROM a, (users)" and "FROM (users u)" are table
+        // references, not subqueries: take the parentheses off a bare name, with or without an
+        // alias, so it is seen. A parenthesis holding a SELECT never matches. The replacement
+        // keeps the string length, so the offsets the common table expressions were recorded
+        // at still line up.
         for ($pass = 0; $pass < 8; $pass++) {
             $unwrapped = preg_replace_callback(
-                "/\\(\\s*({$identifier})\\s*\\)/",
+                "/\\(\\s*({$identifier}(?:\\s+(?:as\\s+)?[a-z_]\\w*)?)\\s*\\)/",
                 fn (array $m) => str_pad(' '.$m[1].' ', strlen($m[0])),
                 $code,
                 -1,
@@ -334,8 +336,9 @@ class SqlGuard
         }
         // An alias is never a keyword — otherwise "FROM a JOIN b" would read JOIN as a's alias and miss b
         $alias = '(?:\s+(?:as\s+)?(?!(?:join|inner|left|right|full|cross|natural|outer|straight_join|lateral|where|on|using|group|order|limit|offset|fetch|having|window|union|except|intersect|minus|for|qualify)\b)[a-z_]\w*)?';
-        // straight_join is listed first: \bjoin cannot match inside it, the underscore is a word character
-        preg_match_all("/\\b(?:straight_join|from|join)\\s+({$identifier}{$alias}(?:\\s*,\\s*{$identifier}{$alias})*)/", $code, $matches, PREG_OFFSET_CAPTURE);
+        // straight_join is listed first: \bjoin cannot match inside it, the underscore is a word
+        // character. CROSS APPLY / OUTER APPLY (SQL Server, Oracle) name a table the same way.
+        preg_match_all("/\\b(?:straight_join|from|join|apply)\\s+({$identifier}{$alias}(?:\\s*,\\s*{$identifier}{$alias})*)/", $code, $matches, PREG_OFFSET_CAPTURE);
 
         $tables = [];
 

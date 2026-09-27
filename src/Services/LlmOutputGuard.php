@@ -163,43 +163,134 @@ class LlmOutputGuard
     {
         $findings = [];
 
-        // Images render — and fetch their URL — without anyone clicking. Any URL is captured,
-        // not only one spelled "https://": the host is worked out afterwards, the way a browser
-        // would, and a relative URL resolves to this site and is left alone.
-        $imagePatterns = [
-            'markdown_image' => '/!\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/i',
-            'html_image' => '/<img\b[^>]*\bsrc\s*=\s*["\']?([^"\'\s>]+)[^>]*>/i',
-        ];
+        // Reference-style Markdown ("![chart][1]" with "[1]: https://…" further down) is
+        // written out inline first, so one set of rules sees every image and link
+        $text = $this->inlineReferences($text);
 
-        foreach ($imagePatterns as $kind => $pattern) {
-            $text = (string) preg_replace_callback($pattern, function (array $match) use ($kind, $allowed, &$findings) {
-                if ($this->isAllowedHost($match[1], $allowed)) {
-                    return $match[0];
+        // A fetch that needs no click. The host is worked out the way a browser would, whatever
+        // the URL is spelled like, and a relative URL resolves to this site and is left alone.
+        $fetches = function (array $urls, string $kind, string $original, string $removed) use ($allowed, &$findings): string {
+            $worst = null;
+
+            foreach ($urls as $url) {
+                if ($this->isAllowedHost($url, $allowed)) {
+                    continue;
                 }
 
-                $carriesData = $this->carriesData($match[1]);
+                $carriesData = $this->carriesData($url);
                 $findings[] = [
                     'type' => $carriesData ? $kind.'_exfiltration' : 'external_'.$kind,
                     'score' => $carriesData ? 85 : 35,
-                    'detail' => $this->hostOf($match[1]),
+                    'detail' => $this->hostOf($url),
                 ];
 
-                return $carriesData ? '[image removed]' : $match[0];
-            }, $text);
-        }
-
-        // Links need a click, but a link stuffed with data is still an exfiltration attempt
-        $text = (string) preg_replace_callback('/(?<!!)\[([^\]]*)\]\(\s*<?([^)\s>]+)>?\s*\)/i', function (array $match) use ($allowed, &$findings) {
-            if ($this->isAllowedHost($match[2], $allowed) || ! $this->carriesData($match[2])) {
-                return $match[0];
+                $worst = $worst || $carriesData;
             }
 
-            $findings[] = ['type' => 'data_bearing_link', 'score' => 60, 'detail' => $this->hostOf($match[2])];
+            return $worst ? $removed : $original;
+        };
 
-            return $match[1].' [link removed]';
-        }, $text);
+        $text = (string) preg_replace_callback(
+            '/!\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/i',
+            fn (array $m) => $fetches([$m[1]], 'markdown_image', $m[0], '[image removed]'),
+            $text
+        );
+
+        // Every element and attribute a browser loads on sight: not only <img src>, but
+        // srcset, <picture>/<source>, <video poster>, <object data>, SVG <image>, <link>
+        $text = (string) preg_replace_callback(
+            '/<(?:img|source|picture|video|audio|object|embed|iframe|frame|image|input|track|link)\b[^>]*>/i',
+            fn (array $m) => $fetches($this->fetchedUrlsIn($m[0]), 'html_image', $m[0], '[image removed]'),
+            $text
+        );
+
+        // CSS loads url(...) on sight as well, inline or in a <style> block
+        $text = (string) preg_replace_callback(
+            '/url\(\s*(["\']?)([^"\')\s]+)\1\s*\)/i',
+            fn (array $m) => $fetches([$m[2]], 'css_url', $m[0], 'url()'),
+            $text
+        );
+
+        // Links need a click, but a link stuffed with data is still an exfiltration attempt
+        $link = function (string $url, string $original, string $removed) use ($allowed, &$findings): string {
+            if ($this->isAllowedHost($url, $allowed) || ! $this->carriesData($url)) {
+                return $original;
+            }
+
+            $findings[] = ['type' => 'data_bearing_link', 'score' => 60, 'detail' => $this->hostOf($url)];
+
+            return $removed;
+        };
+
+        $text = (string) preg_replace_callback(
+            '/(?<!!)\[([^\]]*)\]\(\s*<?([^)\s>]+)>?\s*\)/i',
+            fn (array $m) => $link($m[2], $m[0], $m[1].' [link removed]'),
+            $text
+        );
+
+        $text = (string) preg_replace_callback(
+            '/<a\b[^>]*\bhref\s*=\s*(["\']?)([^"\'\s>]+)\1[^>]*>/i',
+            fn (array $m) => $link($m[2], $m[0], '<a>'),
+            $text
+        );
 
         return [$text, $findings];
+    }
+
+    /**
+     * The URLs an HTML tag would fetch: src, srcset (every candidate), poster, data, href on
+     * <link> and SVG <image>, and the legacy lowsrc and background attributes.
+     *
+     * @return array<int, string>
+     */
+    private function fetchedUrlsIn(string $tag): array
+    {
+        $urls = [];
+
+        if (preg_match_all('/\b(src|srcset|poster|data|href|lowsrc|background|xlink:href)\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s>]+))/i', $tag, $attributes, PREG_SET_ORDER)) {
+            foreach ($attributes as $attribute) {
+                $value = trim(($attribute[2] ?? '') !== '' ? $attribute[2] : (($attribute[3] ?? '') !== '' ? $attribute[3] : ($attribute[4] ?? '')));
+
+                if (strtolower($attribute[1]) === 'srcset') {
+                    // "url 1x, url 2x": the URL is the first token of each candidate
+                    foreach (explode(',', $value) as $candidate) {
+                        $url = strtok(trim($candidate), " \t\n");
+                        if (is_string($url)) {
+                            $urls[] = $url;
+                        }
+                    }
+                } elseif ($value !== '') {
+                    $urls[] = $value;
+                }
+            }
+        }
+
+        return $urls;
+    }
+
+    /**
+     * Rewrite "![alt][id]" / "[text][id]" / "[id][]" references as inline links, and defuse any
+     * definition the rewrite could not use, so a renderer downstream cannot resolve it either.
+     */
+    private function inlineReferences(string $text): string
+    {
+        if (! preg_match_all('/^[ ]{0,3}\[([^\]]+)\]:[ \t]*<?(\S+?)>?(?:[ \t]+["\'(][^\n]*)?$/m', $text, $definitions, PREG_SET_ORDER)) {
+            return $text;
+        }
+
+        $urls = [];
+        foreach ($definitions as $definition) {
+            $urls[strtolower(trim($definition[1]))] = $definition[2];
+        }
+
+        $text = (string) preg_replace_callback('/(!?)\[([^\]]*)\]\[([^\]]*)\]/', function (array $m) use ($urls) {
+            $id = strtolower(trim($m[3] !== '' ? $m[3] : $m[2]));
+
+            return isset($urls[$id]) ? $m[1].'['.$m[2].']('.$urls[$id].')' : $m[0];
+        }, $text);
+
+        // The definitions themselves are inert once nothing points at them
+        return (string) preg_replace('/^[ ]{0,3}\[[^\]]+\]:[ \t]*\S+[^\n]*$/m', '', $text);
     }
 
     private function carriesData(string $url): bool

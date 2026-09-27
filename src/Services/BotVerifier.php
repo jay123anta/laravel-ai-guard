@@ -19,6 +19,9 @@ class BotVerifier
 
     public const UNVERIFIED = 'unverified';
 
+    // Internal: where the per-request verdict is kept. Not part of any public contract.
+    private const REQUEST_ATTRIBUTE = 'ai_guard.verification';
+
     // Re-check a verdict that could not be reached (e.g. range list offline) after 5 minutes
     private const RETRY_SECONDS = 300;
 
@@ -54,6 +57,26 @@ class BotVerifier
         if (! $this->isEnabled()) {
             return $this->result(null);
         }
+
+        // One verdict per request. Several middlewares ask (the main pipeline and the agent
+        // policy), and verifying twice is not only wasted work: the first check spends the
+        // signature's nonce, so the second would see a replay and call a real agent spoofed.
+        $memo = $request->attributes->get(self::REQUEST_ATTRIBUTE);
+        if (is_array($memo)) {
+            return $memo;
+        }
+
+        $verdict = $this->verifyRequest($request);
+        $request->attributes->set(self::REQUEST_ATTRIBUTE, $verdict);
+
+        return $verdict;
+    }
+
+    /**
+     * @return array{status: string|null, method: string|null, identity: string|null, token: string|null, category: string|null, detail: string|null}
+     */
+    private function verifyRequest(Request $request): array
+    {
 
         $methods = $this->config['bot_verification']['methods'] ?? ['web_bot_auth', 'ip_ranges', 'reverse_dns'];
         $signatureDetail = null;

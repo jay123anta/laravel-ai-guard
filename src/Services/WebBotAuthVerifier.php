@@ -98,6 +98,19 @@ class WebBotAuthVerifier
             return $this->result(self::UNSUPPORTED, $agent, detail: 'unsupported signature parameters');
         }
 
+        // draft-ietf-webbotauth-httpsig-protocol §5.2: the signature must bind the target — a
+        // signature over neither @authority nor @target-uri verifies on every host, so one
+        // captured at another site could be replayed here
+        if (! in_array('@authority', $parsed['components'], true) && ! in_array('@target-uri', $parsed['components'], true)) {
+            return $this->result(self::UNSUPPORTED, $agent, $params['keyid'], 'signature covers neither @authority nor @target-uri');
+        }
+
+        // §5.2.1: the Signature-Agent header must be covered, or it could be rewritten to point
+        // the verifier at a different key directory
+        if ($agentHeader !== '' && ! in_array('signature-agent', $parsed['components'], true)) {
+            return $this->result(self::UNSUPPORTED, $agent, $params['keyid'], 'Signature-Agent is not covered by the signature');
+        }
+
         // Freshness
         $now = time();
         $skew = (int) ($this->option('clock_skew') ?? 30);

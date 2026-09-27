@@ -70,6 +70,10 @@ class LlmRouteMiddleware
 
                 return $response;
             }
+
+            // So AiGuard::recordUsage() can settle this estimate against the real count later
+            // in the request instead of charging the input a second time
+            $request->attributes->set(TokenBudget::RESERVATION_ATTRIBUTE, ['subject' => $subject, 'tier' => $tier, 'tokens' => $estimate]);
         }
 
         if ($texts !== []) {

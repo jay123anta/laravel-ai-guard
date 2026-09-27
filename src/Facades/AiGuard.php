@@ -19,7 +19,7 @@ use Illuminate\Support\Facades\Facade;
  * @method static int estimateTokens(string $text)
  * @method static \JayAnta\AiGuard\Support\BudgetDecision checkBudget(int $inputTokens, string $tier = 'default', ?string $subject = null)
  * @method static \JayAnta\AiGuard\Support\BudgetDecision consumeBudget(int $inputTokens, string $tier = 'default', ?string $subject = null)
- * @method static array recordUsage(int $inputTokens, int $outputTokens, ?string $model = null, string $tier = 'default', ?string $subject = null, int $reservedInputTokens = 0)
+ * @method static array recordUsage(int $inputTokens, int $outputTokens, ?string $model = null, string $tier = 'default', ?string $subject = null, ?int $reservedInputTokens = null)
  * @method static array budgetUsage(string $tier = 'default', ?string $subject = null)
  * @method static array moderate(string $text, string $direction = 'input')
  * @method static array checkTopic(string $text)

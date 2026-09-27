@@ -13,6 +13,9 @@ class TokenBudget
 {
     private const MICRO = 1_000_000;
 
+    // Internal: the estimate the ai-guard.llm middleware reserved for the current request
+    public const RESERVATION_ATTRIBUTE = 'ai_guard.budget_reservation';
+
     private array $config;
 
     public function __construct(array $config)

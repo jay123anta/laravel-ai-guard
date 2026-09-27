@@ -13,6 +13,9 @@ use JayAnta\AiGuard\Services\TokenBudget;
 use JayAnta\AiGuard\Services\TopicGuard;
 use JayAnta\AiGuard\Support\Redaction;
 use JayAnta\AiGuard\Support\ReportsThreats;
+use Laravel\Ai\Gateway\StepResponse;
+use Laravel\Ai\Messages\UserMessage;
+use Laravel\Ai\PendingStep;
 use Laravel\Ai\Prompts\AgentPrompt;
 use Laravel\Ai\Responses\StreamedAgentResponse;
 
@@ -42,12 +45,148 @@ class GuardPrompt
         private ?string $conversationId = null,
     ) {}
 
-    public function handle(AgentPrompt $prompt, Closure $next): mixed
+    /**
+     * Per-run state for laravel/ai 1.x, keyed by invocation id: what step 0 found (the
+     * reservation, the redaction) is needed again on every later step of the same run.
+     *
+     * @var array<string, array{redaction: Redaction|null, original: string|null, reserved: int}>
+     */
+    private array $runs = [];
+
+    /**
+     * laravel/ai 0.x calls agent middleware once per prompt with an AgentPrompt; 1.x calls it
+     * once per generation step with a PendingStep. Both are supported.
+     */
+    public function handle(object $prompt, Closure $next): mixed
     {
         if (! (config('ai-guard.enabled') ?? true)) {
             return $next($prompt);
         }
 
+        if ($prompt instanceof PendingStep) {
+            return $this->handleStep($prompt, $next);
+        }
+
+        return $this->handlePrompt($prompt, $next);
+    }
+
+    /**
+     * laravel/ai 1.x: one call per step. The input is checked once, on step 0; a masked prompt is
+     * masked again on every step, because the loop rebuilds each step from its own history; the
+     * reply is scanned and restored on the step that answers (no tool calls); every step's usage
+     * is recorded, since every step is a separate round trip the provider bills.
+     */
+    private function handleStep(PendingStep $step, Closure $next): mixed
+    {
+        $options = (array) (config('ai-guard.llm_guard.agents') ?? []);
+        $tier = $this->tier ?? (string) ($options['tier'] ?? 'default');
+        $budget = app(TokenBudget::class);
+        $subject = $budget->subject(auth()->user(), app()->bound('request') ? request()->ip() : null);
+        $instructions = (string) $step->instructions;
+        $key = $step->invocationId ?? 'run';
+
+        if ($step->isFirstStep()) {
+            $state = ['redaction' => null, 'original' => null, 'reserved' => 0];
+
+            // A fresh prompt ends with the user's message. A run resumed after tool approvals
+            // ends with tool results instead: there is no new user text to check or mask.
+            $messages = $step->messages;
+            $last = $messages === [] ? null : $messages[array_key_last($messages)];
+            if ($last instanceof UserMessage) {
+                $text = (string) $last->content;
+                $state['reserved'] = $this->checkBudget($budget, $subject, $text."\n".$instructions, $tier);
+                $this->checkInput($text);
+
+                if ($this->redact ?? (bool) ($options['redact'] ?? false)) {
+                    $redaction = app(Redactor::class)->redact($text);
+
+                    if ($redaction->hasRedactions()) {
+                        $state['redaction'] = $redaction;
+                        $state['original'] = $text;
+                    }
+                }
+            }
+
+            $this->runs[$key] = $state;
+        }
+
+        $state = $this->runs[$key] ?? ['redaction' => null, 'original' => null, 'reserved' => 0];
+
+        if ($state['redaction'] !== null) {
+            $step = $step->withMessages($this->maskMessages($step->messages, (string) $state['original'], $state['redaction']->text));
+        }
+
+        $reserved = $step->isFirstStep() ? $state['reserved'] : 0;
+        $scan = $this->scanOutput ?? (bool) ($options['scan_output'] ?? true);
+        $result = $next($step);
+
+        return $result->then(function (StepResponse $response) use ($result, $step, $instructions, $state, $budget, $subject, $tier, $reserved, $scan, $key): void {
+            $final = $response->toolCalls === [];
+            $text = $response->text;
+
+            if ($final) {
+                $text = $this->guardReply($response, $text, $result->streamed(), $instructions, $state['redaction'], $scan);
+                unset($this->runs[$key]);
+            }
+
+            if ($budget->isEnabled()) {
+                $input = (int) $response->usage->inputTokens ?: $reserved;
+                $output = (int) $response->usage->outputTokens ?: $budget->estimateTokens($text);
+
+                $budget->record($subject, $input, $output, $step->model, $tier, $reserved);
+            }
+        });
+    }
+
+    /**
+     * Scan the reply and put redacted values back. A streamed reply has already been sent,
+     * so it is scanned and logged but not rewritten.
+     */
+    private function guardReply(object $response, string $text, bool $streamed, string $instructions, ?Redaction $redaction, bool $scan): string
+    {
+        if ($scan && $text !== '') {
+            // Scanned before placeholders are restored, so the user's own data is not reported as a leak
+            $result = app(LlmOutputGuard::class)->scanOutput($text, ['system_prompt' => $instructions]);
+
+            if ($result['detected']) {
+                $blocks = ! $streamed && $this->blocks($result);
+                $this->reportThreat($result, $blocks ? 'blocked' : 'logged');
+
+                if ($blocks) {
+                    $response->text = $text = (string) $result['sanitized'];
+                }
+            }
+        }
+
+        if ($redaction !== null && $redaction->hasRedactions() && ! $streamed) {
+            $response->text = $text = $redaction->restore($text);
+        }
+
+        return $text;
+    }
+
+    /**
+     * The step's messages with the user's prompt replaced by its masked form. New message
+     * objects: the loop's own history is left as it was.
+     *
+     * @param  array<int, mixed>  $messages
+     * @return array<int, mixed>
+     */
+    private function maskMessages(array $messages, string $original, string $masked): array
+    {
+        return array_map(
+            fn ($message) => $message instanceof UserMessage && $message->content === $original
+                ? new UserMessage($masked, $message->attachments)
+                : $message,
+            $messages
+        );
+    }
+
+    /**
+     * laravel/ai 0.x: one call per prompt.
+     */
+    private function handlePrompt(AgentPrompt $prompt, Closure $next): mixed
+    {
         $options = (array) (config('ai-guard.llm_guard.agents') ?? []);
         $tier = $this->tier ?? (string) ($options['tier'] ?? 'default');
         $budget = app(TokenBudget::class);

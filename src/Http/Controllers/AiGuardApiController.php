@@ -6,6 +6,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use JayAnta\AiGuard\Models\AiThreatLog;
+use JayAnta\AiGuard\Services\AuditChain;
 use JayAnta\AiGuard\Services\BotSignatures;
 
 class AiGuardApiController extends Controller
@@ -143,7 +144,7 @@ class AiGuardApiController extends Controller
         ]);
     }
 
-    public function flush(Request $request): JsonResponse
+    public function flush(Request $request, AuditChain $chain): JsonResponse
     {
         // Require explicit confirmation to prevent accidental deletion
         if ($request->query('confirm') !== 'yes') {
@@ -158,10 +159,15 @@ class AiGuardApiController extends Controller
 
         if ($hours !== null) {
             $hours = max(1, min((int) $hours, self::MAX_HOURS));
-            $deleted = AiThreatLog::where('created_at', '<', now()->subHours($hours))->delete();
+            $rows = AiThreatLog::query()->where('created_at', '<', now()->subHours($hours));
         } else {
-            $deleted = AiThreatLog::query()->delete();
+            $rows = AiThreatLog::query();
         }
+
+        // A flush is a deliberate deletion: record it like a prune, so the audit chain still
+        // verifies afterwards while a deletion made directly in the database does not
+        $chain->anchorDeletion($rows);
+        $deleted = $rows->delete();
 
         return response()->json([
             'message' => "{$deleted} records deleted",

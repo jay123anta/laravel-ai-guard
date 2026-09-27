@@ -73,16 +73,23 @@ class SensitiveDataPatterns
                 // followed by a separator: without that, "taskDefinitionArnForProduction" and
                 // "apiClientBundle9fJk21xMzQ" read as secrets, and a page mentioning either is
                 // withheld in block mode.
+                // A name may carry a prefix (DB_PASSWORD, AWS_SECRET_ACCESS_KEY), so it is bounded by
+                // "not a letter or digit" rather than \b, which an underscore defeats. A quoted value
+                // may hold any non-space character; an unquoted one only token characters.
                 'regex' => '/\b(?:sk|pk)[-_](?:live|test|prod)[-_][A-Za-z0-9]{16,}'
                     .'|\b(?:sk|pk)[-_][A-Za-z0-9]{20,}'
+                    .'|\bglpat-[A-Za-z0-9_\-]{20,}'
                     .'|\bbearer\s+[A-Za-z0-9._\-]{20,}'
-                    .'|\b(?:api[-_ ]?(?:key|token|secret)|access[-_ ]?token|auth[-_ ]?token|secret[-_ ]?key|client[-_ ]?secret|password)\b["\']?\s*[:=]\s*["\']?[A-Za-z0-9._\-]{16,}/i',
+                    .'|\bauthorization:\s*(?:token|basic)\s+[A-Za-z0-9._\-+\/=]{20,}'
+                    .'|(?<![A-Za-z0-9])(?:[A-Za-z0-9]+_)*(?:api[-_ ]?(?:key|token|secret)|access[-_ ]?(?:token|key)|auth[-_ ]?token|private[-_ ]?token|secret(?:[-_ ]?access)?[-_ ]?key|client[-_ ]?secret|password|passwd)(?![A-Za-z0-9])'
+                    .'["\']?\s*[:=]\s*(?:"[^"\s]{8,}"|\'[^\'\s]{8,}\'|[A-Za-z0-9._\-\/+]{16,})/i',
             ],
             'email' => [
                 'label' => 'Email Address',
                 'severity' => 70,
-                // One-character local parts are real addresses ("a@example.com")
-                'regex' => '/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/',
+                // One-character local parts are real addresses ("a@example.com"). The local part
+                // has to start at a boundary, and "@2x.png" is a retina image density, not a domain.
+                'regex' => '/(?<![\/a-zA-Z0-9._%+\-])[a-zA-Z0-9._%+\-]+@(?!\d+(?:\.\d+)?x\.(?:png|jpe?g|gif|webp|svg|avif|bmp|ico)\b)[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/',
             ],
             'credit_card' => [
                 'label' => 'Credit Card Number',

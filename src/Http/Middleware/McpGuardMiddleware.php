@@ -150,15 +150,26 @@ class McpGuardMiddleware
 
         $decoded = json_decode($body, true);
 
-        // Server-sent events carry the same JSON-RPC messages, one per "data:" line
+        // Server-sent events carry the same JSON-RPC messages. An event's data may span several
+        // "data:" lines, which the spec joins with a newline; a blank line ends the event.
         if (! is_array($decoded)) {
             $decoded = [];
+            $data = [];
 
-            foreach (preg_split('/\R/', $body) ?: [] as $line) {
-                $message = str_starts_with($line, 'data:') ? json_decode(trim(substr($line, 5)), true) : null;
+            foreach (array_merge(preg_split('/\R/', $body) ?: [], ['']) as $line) {
+                if (str_starts_with($line, 'data:')) {
+                    $data[] = ltrim(substr($line, 5), ' ');
 
-                if (is_array($message)) {
-                    $decoded[] = $message;
+                    continue;
+                }
+
+                if (trim($line) === '' && $data !== []) {
+                    $message = json_decode(implode("\n", $data), true);
+                    $data = [];
+
+                    if (is_array($message)) {
+                        $decoded[] = $message;
+                    }
                 }
             }
         }
@@ -168,7 +179,9 @@ class McpGuardMiddleware
         }
 
         foreach (array_is_list($decoded) ? $decoded : [$decoded] as $message) {
-            $content = is_array($message) ? ($message['result']['content'] ?? null) : null;
+            // The whole result, not only result.content: structuredContent (MCP 2025-06) and any
+            // other field the client hands to the model can carry the same instructions
+            $content = is_array($message) ? ($message['result'] ?? null) : null;
             if (! is_array($content)) {
                 continue;
             }

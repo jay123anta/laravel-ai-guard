@@ -25,6 +25,11 @@ class JsonSchemaValidator
         '$schema', '$id', '$comment', 'nullable',
     ];
 
+    private const NUMERIC_KEYWORDS = [
+        'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf',
+        'minLength', 'maxLength', 'minItems', 'maxItems', 'minProperties', 'maxProperties',
+    ];
+
     /**
      * @return array<int, string>
      */
@@ -46,6 +51,14 @@ class JsonSchemaValidator
         foreach (array_keys($schema) as $keyword) {
             if (! in_array((string) $keyword, self::SUPPORTED, true)) {
                 $errors[] = "{$path} cannot be checked: the schema uses ".(string) $keyword;
+            }
+        }
+
+        // A bound PHP cannot compare as a number is a rule nobody is checking: any array compares
+        // greater than any number, so maximum: [10] would never fail
+        foreach (self::NUMERIC_KEYWORDS as $keyword) {
+            if (array_key_exists($keyword, $schema) && ! is_int($schema[$keyword]) && ! is_float($schema[$keyword])) {
+                $errors[] = "{$path} cannot be checked: {$keyword} is not a number";
             }
         }
 
@@ -71,6 +84,12 @@ class JsonSchemaValidator
             array_push($errors, ...self::validateString($value, $schema, $path));
         } elseif (is_int($value) || is_float($value)) {
             array_push($errors, ...self::validateNumber($value, $schema, $path));
+        } elseif ($value === []) {
+            // [] is both an empty list and an empty object, so both sets of rules apply to it
+            if (self::isArraySchema($schema)) {
+                array_push($errors, ...self::validateArray($value, $schema, $path));
+            }
+            array_push($errors, ...self::validateObject($value, $schema, $path));
         } elseif (is_array($value) && array_is_list($value) && self::isArraySchema($schema)) {
             array_push($errors, ...self::validateArray($value, $schema, $path));
         } elseif (is_array($value)) {

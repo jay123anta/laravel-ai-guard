@@ -15,6 +15,10 @@ class TextNormalizer
     // Unicode "tag" block — invisible characters that mirror ASCII (used for ASCII smuggling)
     private const TAG_RUN = '/[\x{E0000}-\x{E007F}]+/u';
 
+    // A subdivision flag as Unicode defines it: 🏴, 2-7 tag lowercase letters or digits (the region
+    // and subdivision code, e.g. "gbsct"), then the cancel tag (England, Scotland, Wales, …)
+    private const FLAG_SEQUENCE = '/\x{1F3F4}([\x{E0061}-\x{E007A}\x{E0030}-\x{E0039}]{2,7})\x{E007F}/u';
+
     // Variation selectors: an emoji followed by a run of these can carry arbitrary bytes
     // (VS1–VS16 = 0–15, VS17–VS256 = 16–255). A lone VS16 after an emoji is normal.
     private const VARIATION_SELECTORS = '/[\x{FE00}-\x{FE0F}\x{E0100}-\x{E01EF}]/u';
@@ -29,14 +33,16 @@ class TextNormalizer
      * bytes are dropped rather than substituted, so a byte planted inside a word ("ig\xFFnore")
      * leaves the word matchable.
      */
-    public static function toValidUtf8(string $text): string
+    public static function toValidUtf8(string $text, string $replacement = ''): string
     {
         if ($text === '' || mb_check_encoding($text, 'UTF-8')) {
             return $text;
         }
 
+        // Dropping suits a byte planted inside a word; a space suits one standing in for a space.
+        // Callers that cannot know which it was check both.
         $previous = mb_substitute_character();
-        mb_substitute_character('none');
+        mb_substitute_character($replacement === '' ? 'none' : mb_ord($replacement));
 
         try {
             return (string) mb_convert_encoding($text, 'UTF-8', 'UTF-8');
@@ -189,21 +195,24 @@ class TextNormalizer
             return [$text, 0, 0];
         }
 
-        // The longest single run, not the total: a subdivision flag emoji (🏴󠁧󠁢󠁳󠁣󠁴󠁿) carries six tag
-        // characters, so counting every run together would call two of them in one sentence smuggling
+        // Every tag character counts except those inside a well-formed subdivision flag (🏴 + tag
+        // letters + the cancel tag). Counting only the longest run let smuggled text hide as
+        // several short runs; counting everything called two flag emoji in one sentence smuggling.
         $tagChars = 0;
+        if (preg_match_all(self::FLAG_SEQUENCE, $text, $flags)) {
+            foreach ($flags[1] as $code) {
+                $tagChars -= mb_strlen($code) + 1;   // the code letters and the cancel tag
+            }
+        }
         $text = (string) preg_replace_callback(self::TAG_RUN, function (array $match) use (&$tagChars) {
             $decoded = '';
-            $run = 0;
             foreach (mb_str_split($match[0]) as $char) {
-                $run++;
+                $tagChars++;
                 $ascii = mb_ord($char) - 0xE0000;
                 if ($ascii >= 0x20 && $ascii <= 0x7E) {
                     $decoded .= chr($ascii);
                 }
             }
-
-            $tagChars = max($tagChars, $run);
 
             // Surround with spaces so the smuggled text is matched as separate words
             return $decoded === '' ? '' : ' '.$decoded.' ';
@@ -282,15 +291,17 @@ class TextNormalizer
             foreach (array_slice($matches[0], 0, self::MAX_DECODED_CANDIDATES) as $block) {
                 $plain = base64_decode(strtr($block, '-_', '+/'), true);
 
-                if ($plain !== false && $this->isReadableText($plain)) {
+                // Repaired rather than rejected: one invalid byte appended to a payload must not
+                // make the decoded text disappear
+                if ($plain !== false && $this->isReadableText($plain = self::toValidUtf8($plain))) {
                     $decoded[] = [mb_substr($plain, 0, self::MAX_DECODED_LENGTH), 'base64'];
                 }
             }
         }
 
         if (preg_match('/%[0-9a-f]{2}/i', $text)) {
-            $plain = rawurldecode($text);
-            if ($plain !== $text && mb_check_encoding($plain, 'UTF-8')) {
+            $plain = self::toValidUtf8(rawurldecode($text));
+            if ($plain !== $text) {
                 $decoded[] = [$plain, 'url_encoding'];
             }
         }

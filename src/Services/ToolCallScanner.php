@@ -42,12 +42,14 @@ class ToolCallScanner
     public function scan(array|string $payload, string $kind = 'result'): array
     {
         $kind = in_array($kind, self::KINDS, true) ? $kind : 'result';
-        $fields = is_string($payload) ? ['' => $payload] : $this->flatten($payload);
+        // A list of [path, value] pairs, not a map keyed by path: a literal "a.b" key and a nested
+        // a => b share a path, and a map would let one silently replace the other
+        $fields = is_string($payload) ? [['', $payload]] : $this->flatten($payload);
 
         $best = null;
         $findings = [];
 
-        foreach ($fields as $path => $value) {
+        foreach ($fields as [$path, $value]) {
             $hits = $this->poisoningHits($value);
 
             $injection = $this->injectionDetector->analyzeText($value);
@@ -64,6 +66,7 @@ class ToolCallScanner
 
             $finding = ['field' => (string) $path, 'confidence_score' => $score, 'signals' => array_column($hits, 'id')];
             $findings[] = $finding;
+            $finding['value'] = $value;
 
             if ($best === null || $score > $best['confidence_score']) {
                 $best = $finding;
@@ -92,36 +95,38 @@ class ToolCallScanner
             'threat_source' => 'tool_'.$kind,
             'confidence_score' => $best['confidence_score'],
             'matched_pattern' => mb_substr($prefix.implode(', ', $best['signals']), 0, 255),
-            'payload_snippet' => mb_substr($fields[$best['field']], 0, (int) ($this->config['logging']['max_payload_length'] ?? 500)),
+            'payload_snippet' => mb_substr($best['value'], 0, (int) ($this->config['logging']['max_payload_length'] ?? 500)),
             'findings' => $findings,
         ];
     }
 
     /**
-     * String leaves keyed by dotted path (e.g. "inputSchema.properties.a.description").
+     * Every string leaf, and every string key, as [dotted path, text] — e.g.
+     * ["inputSchema.properties.a.description", "..."]. The path is a label for the report only;
+     * two fields sharing a label are still two entries.
      *
      * @param  array<mixed>  $data
-     * @return array<string, string>
+     * @return array<int, array{0: string, 1: string}>
      */
     private function flatten(array $data, string $prefix = ''): array
     {
         $fields = [];
 
         foreach ($data as $key => $value) {
-            // The path is only a label in the report, so a long key is shortened there
+            // A long key is shortened in the label, never in what is scanned
             $label = mb_substr((string) $key, 0, 40);
             $path = $prefix === '' ? $label : $prefix.'.'.$label;
 
             // Names are read by the model too — a schema property, an annotation key, or an
             // argument name carries instructions just as well as a description does
             if (is_string($key) && trim($key) !== '' && ! is_numeric($key)) {
-                $fields[$path.'[name]'] = $key;
+                $fields[] = [$path.'[name]', $key];
             }
 
             if (is_array($value)) {
-                $fields += $this->flatten($value, $path);
+                array_push($fields, ...$this->flatten($value, $path));
             } elseif (is_string($value) && trim($value) !== '') {
-                $fields[$path] = $value;
+                $fields[] = [$path, $value];
             }
         }
 

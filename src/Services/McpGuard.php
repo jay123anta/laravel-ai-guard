@@ -60,7 +60,12 @@ class McpGuard
                 $prefix = rtrim($entry, '*');
                 $next = substr($server, strlen($prefix), 1);
 
-                if (str_starts_with($server, $prefix) && ($next === '' || $next === '/' || $next === ':' || $next === '?' || str_ends_with($prefix, '/'))) {
+                // …and the server must still resolve to the prefix's host: after a ':' can come a
+                // port, or userinfo — https://mcp.example.com:443@evil.test/ goes to evil.test
+                $prefixHost = UrlHost::host($prefix);
+                $sameHost = $prefixHost === null || $prefixHost === '' || $prefixHost === $host;
+
+                if ($sameHost && str_starts_with($server, $prefix) && ($next === '' || $next === '/' || $next === ':' || $next === '?' || str_ends_with($prefix, '/'))) {
                     return true;
                 }
             }

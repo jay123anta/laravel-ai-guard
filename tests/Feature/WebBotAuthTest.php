@@ -141,6 +141,48 @@ class WebBotAuthTest extends TestCase
         $this->assertDatabaseCount('ai_threat_logs', 0);
     }
 
+    public function test_a_signature_must_cover_the_target_host(): void
+    {
+        // Covering neither @authority nor @target-uri makes the signature valid on every host:
+        // a request signed for one site could be replayed at any other
+        $this->signedGet(['components' => ['signature-agent']])->assertOk();
+
+        // Read as an ordinary browser: never verified, and not branded spoofed either
+        $this->assertSame(0, AiThreatLog::where('bot_verification', 'verified')->count());
+        $this->assertSame(0, AiThreatLog::where('bot_verification', 'spoofed')->count());
+    }
+
+    public function test_the_signature_agent_header_must_be_covered(): void
+    {
+        // An uncovered Signature-Agent can be rewritten in transit to point at another directory
+        $this->signedGet(['components' => ['@authority']])->assertOk();
+
+        $this->assertSame(0, AiThreatLog::where('bot_verification', 'verified')->count());
+    }
+
+    public function test_target_uri_satisfies_the_coverage_rule(): void
+    {
+        $this->signedGet(['components' => ['@target-uri', 'signature-agent'], 'target_uri' => 'http://localhost/page'])->assertOk();
+
+        $this->assertSame('verified', AiThreatLog::sole()->bot_verification);
+    }
+
+    public function test_a_signed_agent_is_verified_once_per_request_across_middlewares(): void
+    {
+        // Both middlewares on one route: the second used to re-verify, find the nonce already
+        // spent, and deny the agent it had just verified as spoofed
+        Route::middleware([AiGuardMiddleware::class, 'ai-guard.agents'])->get('/both', fn () => response('ok'));
+
+        $headers = WebBotAuthSigner::headers($this->secret, $this->public, 'localhost', 'https://chatgpt.com', ['nonce' => 'nonce-'.bin2hex(random_bytes(4))]);
+
+        $this->withHeaders(array_merge(['User-Agent' => self::CHROME, 'Accept-Language' => 'en'], $headers))
+            ->get('/both')
+            ->assertOk();
+
+        $this->assertSame(['verified'], AiThreatLog::pluck('bot_verification')->all());
+        $this->assertSame(0, AiThreatLog::where('threat_type', 'ai_agent_denied')->count());
+    }
+
     public function test_replayed_nonce_is_rejected(): void
     {
         $options = ['nonce' => 'nonce-'.bin2hex(random_bytes(4))];

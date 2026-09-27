@@ -498,14 +498,14 @@ Record what a call actually used, so budgets and cost tracking stay accurate:
 AiGuard::recordUsage($response->usage->inputTokens, $response->usage->outputTokens, 'claude-sonnet-5');
 ```
 
-Behind the `ai-guard.llm` middleware, the input was already reserved when the request came in. Tell `recordUsage()` how much, or the input is counted against the quota twice:
+Behind the `ai-guard.llm` middleware, the input was already reserved when the request came in. The first `recordUsage()` call in that request for the same user and tier settles that reservation, so the input is not counted twice. If you reserved it some other way (for example with `consumeBudget()`), say how much:
 
 ```php
 AiGuard::recordUsage(
     $response->usage->inputTokens,
     $response->usage->outputTokens,
     'claude-sonnet-5',
-    reservedInputTokens: AiGuard::estimateTokens($prompt),   // what the middleware reserved
+    reservedInputTokens: $estimate,   // what consumeBudget() reserved
 );
 ```
 
@@ -676,9 +676,9 @@ class SupportAgent implements Agent, HasMiddleware, HasTools
 }
 ```
 
-`GuardPrompt` runs the budget, injection, topic, moderation, and escalation checks before the provider is called, can redact the prompt and restore the reply, scans the reply for exfiltration and leaks of the agent's instructions, and records token usage. A blocked prompt throws `JayAnta\AiGuard\Exceptions\AiGuardBlockedException`, which renders as a JSON 403, 429, or 413 if you do not catch it. Streamed replies are scanned and logged when the stream ends.
+`GuardPrompt` runs the budget, injection, topic, moderation, and escalation checks before the provider is called, can redact the prompt and restore the reply, scans the reply for exfiltration and leaks of the agent's instructions, and records token usage. A blocked prompt throws `JayAnta\AiGuard\Exceptions\AiGuardBlockedException`, which renders as a JSON 403, 429, or 413 if you do not catch it. Streamed replies are scanned and logged when the stream ends. It works with laravel/ai 0.x and 1.x; under 1.x, where middleware runs once per step of the agent loop, the input is checked on the first step, redaction holds for every step, and token usage is recorded for each one.
 
-`AiGuard::guardTools()` puts each tool — including MCP client tools — behind the tool firewall. A refused call never runs (the model is told why), and a call that needs approval pauses the run through laravel/ai's own approval flow.
+`AiGuard::guardTools()` puts each tool — including sub-agents, `ToolSearch` tool sets, and MCP client and server tools — behind the tool firewall. A refused call never runs (the model is told why), and a call that needs approval pauses the run through laravel/ai's own approval flow.
 
 ### Model-written SQL
 
@@ -1018,7 +1018,9 @@ Threats keep being logged in the meantime, just without `bot_category`, `bot_ver
 
 ### ai-guard:audit-verify reports a broken chain
 
-The row it names was edited, moved, or a row before it was deleted outside `ai-guard:prune` (for example with `DELETE` in SQL or the API's flush endpoint). Rows written before `hash_chain` was turned on are not part of the chain.
+The row it names was edited, moved, or a row before it was deleted outside `ai-guard:prune` and the API's flush endpoint (for example with `DELETE` in SQL, `TRUNCATE`, or `migrate:fresh`). Rows written before `hash_chain` was turned on are not part of the chain.
+
+The break stays reported, including after new rows are written: that is what makes a deletion evident. If you emptied the table on purpose and want to start a new chain, also delete the signed record of the chain's end, `storage/app/ai-guard/audit-anchor.json` (or your `audit.anchor_path`).
 
 ### Honeypot conflicts with my real routes
 
@@ -1107,7 +1109,7 @@ composer analyse     # PHPStan (level 6, Larastan)
 composer format      # Laravel Pint
 ```
 
-The suite has 438 tests. Feature tests run full request → middleware → detection → database → events pipelines against the package's real migrations: bot purpose policies, Web Bot Auth with real Ed25519 signatures, IP-range and reverse-DNS verification, edge fingerprints, ML and moderation drivers against faked providers, budgets, the tool firewall and MCP pinning, laravel/ai agents (when laravel/ai is installed), safe rendering and CSP, the SQL gate, the audit chain and exports, and every Artisan command. Unit tests cover signature matching, RFC 9309 parsing, text normalization, weighted prompt-injection scoring (including held-out phrasings that are not in the red-team corpus and a false-positive corpus), IP range sets, and secret patterns.
+The suite has 468 tests. Feature tests run full request → middleware → detection → database → events pipelines against the package's real migrations: bot purpose policies, Web Bot Auth with real Ed25519 signatures, IP-range and reverse-DNS verification, edge fingerprints, ML and moderation drivers against faked providers, budgets, the tool firewall and MCP pinning, laravel/ai agents (when laravel/ai is installed), safe rendering and CSP, the SQL gate, the audit chain and exports, and every Artisan command. Unit tests cover signature matching, RFC 9309 parsing, text normalization, weighted prompt-injection scoring (including held-out phrasings that are not in the red-team corpus and a false-positive corpus), IP range sets, and secret patterns.
 
 Tests never make real network calls (`Http::preventStrayRequests()`).
 

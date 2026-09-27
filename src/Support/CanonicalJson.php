@@ -42,23 +42,42 @@ final class CanonicalJson
         return hash('sha256', self::encode($value));
     }
 
+    /**
+     * Every value JSON would write lossily is replaced by a tag that keeps it apart. Values JSON
+     * writes exactly are left alone, so ordinary arguments and tool definitions hash as before.
+     */
     private static function sort(mixed $value, int $depth = 0): mixed
     {
         // Below the depth limit the contents are folded into a digest rather than dropped: a
         // placeholder would give every deeply nested value the same hash, and these hashes bind
         // approval tokens to their arguments and pin MCP tool definitions
         if ($depth > 64) {
-            return 'ai-guard:deep:'.hash('sha256', print_r($value, true));
+            return 'ai-guard:deep:'.hash('sha256', self::typed($value));
         }
 
         if (is_object($value)) {
             $value = method_exists($value, 'toArray') ? $value->toArray() : get_object_vars($value);
         }
 
-        // Invalid UTF-8 is kept apart rather than collapsed onto U+FFFD by the encoder, which
-        // would make "\xB1" and "\xB2" hash alike
         if (is_string($value)) {
-            return mb_check_encoding($value, 'UTF-8') ? $value : 'ai-guard:b64:'.base64_encode($value);
+            // Invalid UTF-8 is kept apart rather than collapsed onto U+FFFD by the encoder, which
+            // would make "\xB1" and "\xB2" hash alike
+            if (! mb_check_encoding($value, 'UTF-8')) {
+                return 'ai-guard:b64:'.base64_encode($value);
+            }
+
+            // A real string can never be mistaken for one of the tags below
+            return str_starts_with($value, 'ai-guard:') ? 'ai-guard:str:'.$value : $value;
+        }
+
+        // Partial JSON output writes INF, -INF and NAN as 0 — and json_decode('1e999') is INF,
+        // so an approval for an amount of 0 would also cover an amount of 1e999
+        if (is_float($value) && ! is_finite($value)) {
+            return 'ai-guard:float:'.(is_nan($value) ? 'NAN' : ($value > 0 ? 'INF' : '-INF'));
+        }
+
+        if (is_resource($value) || gettype($value) === 'resource (closed)') {
+            return 'ai-guard:resource';
         }
 
         if (! is_array($value)) {
@@ -70,5 +89,18 @@ final class CanonicalJson
         }
 
         return array_map(fn ($item) => self::sort($item, $depth + 1), $value);
+    }
+
+    /**
+     * A representation that keeps types apart — print_r() writes true, 1 and "1" identically.
+     */
+    private static function typed(mixed $value): string
+    {
+        try {
+            return serialize($value);
+        } catch (\Throwable) {
+            // Closures and other values serialize() refuses
+            return 'php:'.gettype($value).':'.print_r($value, true);
+        }
     }
 }

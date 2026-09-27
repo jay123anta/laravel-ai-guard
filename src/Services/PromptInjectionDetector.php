@@ -20,6 +20,10 @@ class PromptInjectionDetector
     // Windows read from input longer than max_input_length (half from the start, half from the end)
     private const MAX_WINDOWS = 8;
 
+    // C0 control characters other than tab, newline and carriage return, and DEL: \s does not
+    // match them, so a NUL between words would otherwise hide a phrase as well as a bad byte does
+    private const CONTROLS = '/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/';
+
     // Above this size the raw pass that pins a window around a mid-document match is skipped
     private const RAW_SCAN_LIMIT = 1048576;
 
@@ -119,11 +123,30 @@ class PromptInjectionDetector
      */
     public function analyzeText(string $text): array
     {
-        $maxLength = max(64, (int) ($this->config['prompt_injection']['max_input_length'] ?? 10000));
+        // Every pattern is a /u pattern, and those match nothing at all against invalid UTF-8:
+        // without repair, one junk byte appended to a payload disables the whole layer. A stray
+        // byte or control character is ambiguous, though — planted inside a word it should be
+        // dropped ("ig\xFFnore"), standing in for a space it should become one
+        // ("ignore\xFFall\xFFprevious") — so when there is one, both readings are checked.
+        $dropped = (string) preg_replace(self::CONTROLS, '', TextNormalizer::toValidUtf8($text));
+        $spaced = (string) preg_replace(self::CONTROLS, ' ', TextNormalizer::toValidUtf8($text, ' '));
 
-        // Every pattern below is a /u pattern, and those match nothing at all against invalid
-        // UTF-8: without this, one junk byte appended to a payload disables the whole layer
-        $text = TextNormalizer::toValidUtf8($text);
+        if ($spaced === $dropped) {
+            return $this->analyzeRepaired($dropped);
+        }
+
+        $first = $this->analyzeRepaired($dropped);
+        $second = $this->analyzeRepaired($spaced);
+
+        return $second['confidence_score'] > $first['confidence_score'] ? $second : $first;
+    }
+
+    /**
+     * The analysis proper, on text that is valid UTF-8 with no control characters.
+     */
+    private function analyzeRepaired(string $text): array
+    {
+        $maxLength = max(64, (int) ($this->config['prompt_injection']['max_input_length'] ?? 10000));
 
         if ($text === '') {
             return $this->buildEmptyResult();
@@ -433,9 +456,13 @@ class PromptInjectionDetector
             ['llama2_template', 'chat_template', 95, '\[\/?INST\]|<<\/?SYS>>'],
             ['gemma_template', 'chat_template', 95, '<(?:start|end)_of_turn>'],
             ['mistral_template', 'chat_template', 90, '\[\/?(?:SYSTEM_PROMPT|AVAILABLE_TOOLS|TOOL_CALLS|TOOL_RESULTS|TOOL_CONTENT)\]'],
-            ['transcript_injection', 'chat_template', 70, '\n\s*\n\s*(?:Human|Assistant)\s*:'],
+            // Whitespace runs are bounded in these two: an unbounded \s* after a line anchor restarts
+            // at every position of a long run, which made a 100 KB field of "\n \n …" take close to
+            // a minute. Nothing is lost for runs of pure whitespace — a match can start anywhere in
+            // the run — and long indentation is collapsed by the normalizer's whitespace variant.
+            ['transcript_injection', 'chat_template', 70, '\n[^\S\n]{0,20}\n\s{0,20}(?:Human|Assistant)[^\S\n]{0,20}:'],
             ['fake_system_message', 'chat_template', 70,
-                '(?:^|\n)\s*[#*\[(]*\s*(?:system|developer|admin)\s+(?:prompt|message|instructions?|override|update|note)\s*[\])]*\s*:'],
+                '(?:^|\n)\s{0,20}[#*\[(]{0,6}\s{0,20}(?:system|developer|admin)\s{1,20}(?:prompt|message|instructions?|override|update|note)\s{0,20}[\])]{0,6}\s{0,20}:'],
             ['bracketed_system_tag', 'chat_template', 65, '\[\s*(?:system|developer)\s*(?:message|prompt|note|instructions?)?\s*\]'],
             ['tool_call_markup', 'chat_template', 70,
                 '<\s*\/?\s*(?:tool_call|tool_response|tool_result|function_calls?|function_results?|invoke\s+name)\b'],

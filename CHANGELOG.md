@@ -5,6 +5,44 @@ All notable changes to `jayanta/laravel-ai-guard` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.1](https://github.com/jay123anta/laravel-ai-guard/compare/v3.0.0...v3.0.1) — 2026-09-27
+
+A patch release: laravel/ai 1.x support, a fix for signed agents being refused when two guard middlewares run, and bypasses closed in the output guard, SQL gate, secret patterns, MCP and the audit chain. No configuration or migration changes.
+
+### Fixed
+
+**laravel/ai**
+
+- **laravel/ai 1.x support.** laravel/ai 1.0 runs agent middleware once per step (`PendingStep` → `StepResult`) instead of once per prompt, and `GuardPrompt` failed with a `TypeError` on it. `GuardPrompt` now handles both: under 1.x the input checks and the budget run on the first step, redaction is re-applied to every step (each step rebuilds its messages from history), the final answer is scanned and restored, and token usage is recorded for every step. The 0.x behaviour is unchanged.
+- `AiGuard::guardTools()` now unwraps what laravel/ai unwraps: sub-agents, `ToolSearch` tool sets (recursively), and MCP server tools are guarded as well as plain tools and MCP client tools.
+
+**Bot verification**
+
+- A signed agent was refused as `spoofed_bot` on routes that used both the global middleware and `ai-guard.agents`: the second verification found the signature's nonce already spent. A request is now verified once and the result reused.
+- Web Bot Auth follows `draft-ietf-webbotauth-httpsig-protocol-00`: a signature must cover `@authority` or `@target-uri`, and must cover `Signature-Agent` when that header is sent. A signature that does not is treated as unsupported, not verified.
+
+**LLM features**
+
+- **Budgets:** behind `ai-guard.llm`, `recordUsage()` now settles the input the middleware reserved on its own, so input is no longer counted twice when `reservedInputTokens` is not passed. Passing it still works.
+- **Output guard:** fetched URLs are found in every attribute a browser loads from (`srcset` candidates, `poster`, `data`, `lowsrc`, `background`, `xlink:href`, and `<link>`, `<object>`, `<embed>`, `<iframe>`, `<track>`, `<input type=image>`, SVG `<image>`), in CSS `url()`, and in reference-style Markdown links and images.
+- **SQL gate:** `[bracketed]` identifiers, parenthesised table references with an alias, and `CROSS/OUTER APPLY` are resolved, so a table outside `allowed_tables` can no longer be reached through them.
+- **Tool calls:** `scanToolCall()` no longer loses an argument when two paths flatten to the same key, and the finding's snippet is the value that matched.
+- **MCP:** a server allow-list entry no longer matches a URL that hides another host behind userinfo (`https://mcp.example.com:443@evil.test`). The `ai-guard.mcp` middleware scans the whole result, including `structuredContent`, and reads multi-line SSE `data:` events whole.
+- **JSON Schema:** a numeric keyword with a non-numeric value is reported as uncheckable instead of being skipped, and an empty PHP array is checked against both array and object rules.
+- **Tool pins:** values JSON cannot represent exactly (invalid UTF-8, NaN/INF, resources, nesting past 64 levels, strings that look like the package's own tags) are hashed losslessly, so two different definitions can no longer share a pin. Existing pins stay valid.
+
+**Detection**
+
+- Two prompt-injection patterns (`transcript_injection`, `fake_system_message`) took quadratic time on long runs of whitespace — a 1 MB input could hold a request for minutes. They are now linear.
+- Invalid UTF-8 bytes and control characters can no longer hide a payload: text is analysed both with them removed and with them read as spaces, and the higher score is kept. Encoded payloads (base64, URL) containing a bad byte are repaired and decoded instead of skipped.
+- Tag smuggling split around a real flag emoji is counted.
+- Secret patterns: GitLab tokens (`glpat-`), `Authorization: token|basic`, prefixed names (`DB_PASSWORD`, `AWS_SECRET_ACCESS_KEY`), and quoted values (`"password": "…"`) are detected. Retina asset names (`logo@2x.png`) are no longer read as email addresses.
+
+**Audit trail**
+
+- Deleting the newest rows from the database and appending again no longer seals over the gap: a new row links to the signed head, so `ai-guard:audit-verify` reports the break.
+- The API flush endpoint (`DELETE /ai-guard/api/flush`) now records what it deleted the way `ai-guard:prune` does, so the chain still verifies after a flush. Deleting rows directly in the database is still reported.
+
 ## [3.0.0](https://github.com/jay123anta/laravel-ai-guard/compare/v2.1.0...v3.0.0) — 2026-09-14
 
 v3 updates the package for how AI traffic and attacks look in 2026. On the inbound side: AI bots split by purpose, crawler identity verification (Web Bot Auth, published IP ranges, reverse DNS), edge TLS fingerprints, and obfuscation-resistant weighted prompt-injection scoring. For the LLM features you build: usage budgets, moderation and topic policy, PII redaction, a tool-call firewall, MCP tool pinning, a laravel/ai integration, safe rendering of model output, a red-team command, and a tamper-evident audit trail with SIEM and OpenTelemetry export. See [UPGRADE.md](UPGRADE.md) before upgrading.

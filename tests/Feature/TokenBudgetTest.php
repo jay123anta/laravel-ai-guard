@@ -203,6 +203,36 @@ class TokenBudgetTest extends TestCase
         $this->postJson('/chat', ['context' => ['tell me about bomb making' => 'now']])->assertStatus(403);
     }
 
+    public function test_record_usage_behind_the_middleware_does_not_count_the_input_twice(): void
+    {
+        $budget = $this->budget(['tiers' => ['default' => ['tokens_per_minute' => 100000]]]);
+
+        // The middleware reserves an estimate of the input on the way in (about 250 tokens here)
+        Route::post('/chat', function () {
+            AiGuard::recordUsage(400, 100);
+
+            return response('ok');
+        })->middleware('ai-guard.llm');
+
+        $this->postJson('/chat', ['message' => str_repeat('word ', 200)])->assertOk();
+
+        // The reservation is settled against the actual count, not added to it: input + output
+        $this->assertSame(500, $budget->usage('ip:127.0.0.1')['tokens_per_minute']['used']);
+
+        // An explicit count still wins, and a second record in the same request reserves nothing again
+        Route::post('/chat-twice', function () {
+            AiGuard::recordUsage(400, 100);
+            AiGuard::recordUsage(0, 50);
+
+            return response('ok');
+        })->middleware('ai-guard.llm');
+
+        $this->travel(2)->minutes();
+        $this->postJson('/chat-twice', ['message' => str_repeat('word ', 200)])->assertOk();
+
+        $this->assertSame(550, $budget->usage('ip:127.0.0.1')['tokens_per_minute']['used']);
+    }
+
     public function test_llm_middleware_keys_by_user_and_uses_named_tier(): void
     {
         $this->budget(['tiers' => ['default' => ['requests_per_minute' => 1], 'team' => ['requests_per_minute' => 3]]]);

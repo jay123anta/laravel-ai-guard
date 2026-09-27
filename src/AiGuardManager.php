@@ -204,15 +204,42 @@ class AiGuardManager
     /**
      * Record a completed call's usage (from the provider's usage data) against the caller's budget.
      *
+     * @param  int|null  $reservedInputTokens  What was already counted for this call. Null (the
+     *                                         default) settles the estimate the ai-guard.llm
+     *                                         middleware reserved for this request, once.
      * @return array{tokens: int, cost: float}
      */
-    /**
-     * @param  int  $reservedInputTokens  What consumeBudget() already counted for this call, so
-     *                                    the input is not charged to the quota twice
-     */
-    public function recordUsage(int $inputTokens, int $outputTokens, ?string $model = null, string $tier = 'default', ?string $subject = null, int $reservedInputTokens = 0): array
+    public function recordUsage(int $inputTokens, int $outputTokens, ?string $model = null, string $tier = 'default', ?string $subject = null, ?int $reservedInputTokens = null): array
     {
-        return app(TokenBudget::class)->record($subject ?? $this->budgetSubject(), $inputTokens, $outputTokens, $model, $tier, $reservedInputTokens);
+        $subject ??= $this->budgetSubject();
+
+        if ($reservedInputTokens === null) {
+            $reservedInputTokens = $this->takeReservation($subject, $tier);
+        }
+
+        return app(TokenBudget::class)->record($subject, $inputTokens, $outputTokens, $model, $tier, $reservedInputTokens);
+    }
+
+    /**
+     * The middleware's reservation for this request, if it was for the same subject and tier.
+     * Taken once, so a second record in the same request is not discounted again.
+     */
+    private function takeReservation(string $subject, string $tier): int
+    {
+        if (! app()->bound('request')) {
+            return 0;
+        }
+
+        $attributes = request()->attributes;
+        $reservation = $attributes->get(TokenBudget::RESERVATION_ATTRIBUTE);
+
+        if (! is_array($reservation) || ($reservation['subject'] ?? null) !== $subject || ($reservation['tier'] ?? null) !== $tier) {
+            return 0;
+        }
+
+        $attributes->remove(TokenBudget::RESERVATION_ATTRIBUTE);
+
+        return (int) ($reservation['tokens'] ?? 0);
     }
 
     /**

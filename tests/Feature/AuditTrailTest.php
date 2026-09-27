@@ -16,6 +16,14 @@ class AuditTrailTest extends TestCase
 
     private string $logFile;
 
+    protected function getEnvironmentSetUp($app): void
+    {
+        parent::getEnvironmentSetUp($app);
+
+        // Package API routes read this when they load, before any test body runs
+        $app['config']->set('ai-guard.api.middleware', ['api']);
+    }
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -153,6 +161,60 @@ class AuditTrailTest extends TestCase
 
         // …and the rows written after the prune are still tamper-evident
         DB::table('ai_threat_logs')->orderBy('id')->limit(1)->update(['matched_pattern' => 'edited']);
+        $this->artisan('ai-guard:audit-verify')->assertFailed();
+    }
+
+    public function test_the_chain_continues_after_the_api_flushes_every_row(): void
+    {
+        $this->set(['audit.hash_chain' => true]);
+
+        AiGuard::log($this->threat('a'));
+        AiGuard::log($this->threat('b'));
+
+        $this->deleteJson('/ai-guard/api/flush?confirm=yes')->assertOk();
+        $this->assertSame(0, AiThreatLog::count());
+        $this->artisan('ai-guard:audit-verify')->assertSuccessful();
+
+        AiGuard::log($this->threat('c'));
+
+        // A flush is a deliberate deletion, recorded like a prune, not tampering
+        $this->artisan('ai-guard:audit-verify')->expectsOutputToContain('Verified 1 log row(s)')->assertSuccessful();
+    }
+
+    public function test_the_chain_continues_after_the_api_flushes_old_rows(): void
+    {
+        $this->set(['audit.hash_chain' => true]);
+
+        AiGuard::log($this->threat('a'));
+        AiGuard::log($this->threat('b'));
+        $this->travel(3)->hours();
+        AiGuard::log($this->threat('c'));
+
+        $this->deleteJson('/ai-guard/api/flush?confirm=yes&hours=2')->assertOk()->assertJsonPath('message', '2 records deleted');
+
+        AiGuard::log($this->threat('d'));
+        $this->artisan('ai-guard:audit-verify')->expectsOutputToContain('Verified 2 log row(s)')->assertSuccessful();
+    }
+
+    public function test_the_next_row_cannot_seal_over_deleted_rows(): void
+    {
+        $this->set(['audit.hash_chain' => true]);
+
+        foreach (['a', 'b', 'c', 'd', 'e'] as $pattern) {
+            AiGuard::log($this->threat($pattern));
+        }
+        $ids = AiThreatLog::orderBy('id')->pluck('id')->all();
+
+        // Database access only: remove the newest rows, then let the app log one more threat
+        DB::table('ai_threat_logs')->where('id', '>=', $ids[2])->delete();
+        AiGuard::log($this->threat('f'));
+
+        $this->artisan('ai-guard:audit-verify')->assertFailed();
+
+        // The same with the table emptied
+        DB::table('ai_threat_logs')->delete();
+        AiGuard::log($this->threat('g'));
+
         $this->artisan('ai-guard:audit-verify')->assertFailed();
     }
 

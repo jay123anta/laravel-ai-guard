@@ -85,6 +85,25 @@ class JsonSchemaValidatorTest extends TestCase
         $this->assertSame([], JsonSchemaValidator::validate('x', ['type' => 'string', 'title' => 'Query', 'description' => 'The search', 'default' => '']));
     }
 
+    public function test_an_empty_value_is_checked_against_object_rules_too(): void
+    {
+        // [] is both an empty list and an empty object; `items` in the schema used to send it
+        // down the array branch only, skipping `required`
+        $errors = JsonSchemaValidator::validate([], ['type' => 'object', 'required' => ['a'], 'items' => ['type' => 'string']]);
+
+        $this->assertContains('$.a is required', $errors);
+    }
+
+    public function test_a_bound_that_is_not_a_number_cannot_be_checked(): void
+    {
+        // PHP compares any array as greater than any number, so maximum: [10] never failed
+        foreach (['minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf', 'minLength', 'maxLength', 'minItems', 'maxItems'] as $keyword) {
+            $errors = JsonSchemaValidator::validate(1000, [$keyword => [10]]);
+
+            $this->assertSame(["\$ cannot be checked: {$keyword} is not a number"], $errors, $keyword);
+        }
+    }
+
     public function test_types_and_numeric_bounds(): void
     {
         $this->assertSame(['$.amount must be at most 500'], JsonSchemaValidator::validate(['to' => 'a@b.co', 'amount' => 9000], $this->schema()));

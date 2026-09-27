@@ -35,7 +35,7 @@ Protect your Laravel app from AI scrapers, spoofed crawlers, and prompt injectio
 - **laravel/ai integration** — agent middleware and guarded tools
 - **Model-written SQL gate**, a **red-team command** with CI thresholds, and a **tamper-evident audit trail** with SIEM and OpenTelemetry export
 
-All detections are logged to your database with a built-in dashboard, 10 REST API endpoints, Artisan commands, a `ThreatDetected` event, and Slack alerts.
+All detections are logged to your database with a built-in dashboard, 10 REST API endpoints, Artisan commands, a `ThreatDetected` event, and Slack alerts. Bot identity is also published as [dependency-free events](#interop-contract) that other code can listen to.
 
 ## Requirements
 
@@ -746,6 +746,64 @@ Event::listen(function (ThreatDetected $event) {
 
 This includes tool-firewall, MCP, budget, and agent-policy decisions. Listener exceptions are caught and logged — a broken listener never breaks request handling. `AiGuard::log()` dispatches the event too.
 
+## Interop Contract
+
+`ThreatDetected` reports what AI Guard *acted on*. The interop contract, `ai-guard.verdict/1`, reports *who the client is* — for other packages and services that want AI Guard's bot identity without depending on AI Guard. It is a published convention, not an API: named events and a request attribute, read by class-name string and array key, with nothing to import. Code that listens keeps working when AI Guard is not installed; the events simply never fire.
+
+**Events** — at most once per request, when an AI Guard middleware first evaluates it:
+
+| Event | Fires when |
+|---|---|
+| `JayAnta\AiGuard\Events\BotClassified` | The client is a known bot category, or its identity was verified or found spoofed |
+| `JayAnta\AiGuard\Events\AgentVerified` | Its identity was verified (Web Bot Auth, published IP ranges, or reverse DNS) — in addition to `BotClassified` |
+| `JayAnta\AiGuard\Events\SpoofedBotDetected` | It claimed a verifiable identity and failed every check that could run — in addition to `BotClassified` |
+
+Each carries scalar, read-only properties — `schema`, `category`, `token`, `identity`, `status`, `method`, `ip`, `requestMethod`, `path` (no query string), `evaluatedAt` — and `toArray()`. Ordinary visitors fire nothing.
+
+```php
+// No `use JayAnta\AiGuard\...` needed — subscribe by name
+Event::listen('JayAnta\AiGuard\Events\AgentVerified', function (object $event) {
+    if (($event->schema ?? null) !== 'ai-guard.verdict/1') {
+        return;   // a future major version: ignore rather than misread
+    }
+
+    // $event->identity ('chatgpt.com'), $event->category ('ai_agents'), $event->method ('web_bot_auth'), ...
+});
+```
+
+**Request attribute** — after an AI Guard middleware has run, `request()->attributes->get('ai_guard.verdict')`:
+
+```php
+[
+    'schema' => 'ai-guard.verdict/1',
+    'bot' => ['category' => 'ai_agents', 'token' => null, 'identity' => 'chatgpt.com'],
+    'verification' => ['status' => 'verified', 'method' => 'web_bot_auth'],
+    'evaluated_at' => '2026-09-27T10:15:00+00:00',
+]
+```
+
+Absent means the request was not evaluated: the package is disabled, the request is whitelisted, or no AI Guard middleware has evaluated it yet (`ai-guard.agents:allow` lets everyone through without evaluating). Present with nulls means evaluated: not a recognised bot.
+
+| Field | Meaning | v1 values |
+|---|---|---|
+| `bot.category` | What kind of client this is — from a Web Bot Auth signature when there is one (`bot_verification.web_bot_auth.category`, default `ai_agents`), otherwise from the user-agent | `ai_training`, `ai_search`, `ai_agents`, `search_engines`, `seo_tools`, `scrapers`, `bad_bots`, `data_harvesters`, `null` |
+| `bot.token` | The bot name matched in the user-agent (`GPTBot`); `null` when nothing matched, e.g. a signed agent browsing with a normal browser user-agent | any signature token, `null` |
+| `bot.identity` | Who verification checked: the signing agent's host (`chatgpt.com`), or the crawler it checked by IP range or DNS (`Googlebot`) | any, `null` |
+| `verification.status` | The result of that check | `verified`, `spoofed`, `unverified`, `null` |
+| `verification.method` | How it was checked; with `unverified`, the check that was tried but could not complete | `web_bot_auth`, `ip_ranges`, `reverse_dns`, `null` |
+
+What to rely on:
+
+- **`identity` is only confirmed when `status` is `verified`.** Otherwise it is what the client *claimed* — anyone can send a request that claims to be `chatgpt.com` and gets reported as spoofed. Treat a spoofed identity as the name being impersonated, and rate-limit anything that alerts on it.
+
+- **Identity, not policy.** The category is the client's best match across every category — a verified Googlebot reads as `search_engines` even though that category is not blocked by default — and it does not depend on the blocking mode.
+- **`status` null means unknown**, not unverified: verification is off by default (`bot_verification.enabled`), and without it `AgentVerified` and `SpoofedBotDetected` never fire.
+- **Timing.** Events fire when AI Guard evaluates the request. Code that decides in middleware running *before* AI Guard's should decide after `$next($request)` instead, or register AI Guard earlier.
+- **Versioning.** Within v1, fields and enum values may be added, never renamed or removed — treat an unknown value as unknown, not as an error. A breaking change becomes `ai-guard.verdict/2`, emitted alongside v1 for at least one minor release. Contract changes are listed under their own heading in the CHANGELOG.
+- **Off switch.** `interop.enabled => false` stops the events; the attribute is still set.
+
+The canonical example payload is [`tests/Fixtures/interop/verdict-v1.json`](tests/Fixtures/interop/verdict-v1.json), and the test suite fails if the package drifts from it.
+
 ## Dashboard
 
 After installation, visit your dashboard at:
@@ -1015,7 +1073,7 @@ composer analyse     # PHPStan (level 6, Larastan)
 composer format      # Laravel Pint
 ```
 
-The suite has 468 tests. Feature tests run full request → middleware → detection → database → events pipelines against the package's real migrations: bot purpose policies, Web Bot Auth with real Ed25519 signatures, IP-range and reverse-DNS verification, edge fingerprints, ML and moderation drivers against faked providers, budgets, the tool firewall and MCP pinning, laravel/ai agents (when laravel/ai is installed), safe rendering and CSP, the SQL gate, the audit chain and exports, and every Artisan command. Unit tests cover signature matching, RFC 9309 parsing, text normalization, weighted prompt-injection scoring (including held-out phrasings that are not in the red-team corpus and a false-positive corpus), IP range sets, and secret patterns.
+The suite has 480 tests. Feature tests run full request → middleware → detection → database → events pipelines against the package's real migrations: bot purpose policies, Web Bot Auth with real Ed25519 signatures, IP-range and reverse-DNS verification, edge fingerprints, ML and moderation drivers against faked providers, budgets, the tool firewall and MCP pinning, laravel/ai agents (when laravel/ai is installed), safe rendering and CSP, the SQL gate, the audit chain and exports, and every Artisan command. Unit tests cover signature matching, RFC 9309 parsing, text normalization, weighted prompt-injection scoring (including held-out phrasings that are not in the red-team corpus and a false-positive corpus), IP range sets, and secret patterns.
 
 Tests never make real network calls (`Http::preventStrayRequests()`).
 

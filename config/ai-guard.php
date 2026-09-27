@@ -409,6 +409,14 @@ return [
         ],
     ],
 
+    // Interop contract (ai-guard.verdict/1) — events other code can listen to by class-name
+    // string, with no dependency on this package: BotClassified, AgentVerified, and
+    // SpoofedBotDetected. Nothing changes when no one listens. See the README.
+    'interop' => [
+        // false stops the events; the ai_guard.verdict request attribute is set either way
+        'enabled' => true,
+    ],
+
     // AI usage preferences — tell crawlers how your content may be used.
     // Both standards are still drafts; they are opt-in and advisory (crawlers may ignore them).
     'ai_preferences' => [

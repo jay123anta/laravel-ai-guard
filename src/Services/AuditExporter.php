@@ -15,7 +15,7 @@ use JayAnta\AiGuard\Support\SensitiveDataPatterns;
  */
 class AuditExporter
 {
-    public const VERSION = '3.0.0';
+    public const VERSION = '3.1.0';
 
     // Events held for one flush before the rest are dropped (ai-guard.audit.max_buffered)
     public const MAX_BUFFERED = 500;

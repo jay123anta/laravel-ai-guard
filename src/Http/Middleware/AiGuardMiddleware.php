@@ -16,6 +16,7 @@ use JayAnta\AiGuard\Services\PromptInjectionDetector;
 use JayAnta\AiGuard\Services\RequestFingerprinter;
 use JayAnta\AiGuard\Services\ResponseScanner;
 use JayAnta\AiGuard\Services\RobotsTxtEnforcer;
+use JayAnta\AiGuard\Support\RequestVerdict;
 use JayAnta\AiGuard\Support\ThreatLogger;
 
 class AiGuardMiddleware
@@ -83,6 +84,9 @@ class AiGuardMiddleware
 
         // 2a. Bot verification — Web Bot Auth signature, published IP ranges, reverse DNS
         $verification = $this->botVerifier->verify($request);
+
+        // Who the client is, kept on the request and announced once (interop contract)
+        RequestVerdict::for($request);
 
         if ($verification['status'] === BotVerifier::SPOOFED) {
             // The claimed identity is fake — report the impersonation, not the claim

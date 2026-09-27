@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use JayAnta\AiGuard\Facades\AiGuard;
 use JayAnta\AiGuard\Models\AiThreatLog;
+use JayAnta\AiGuard\Services\AuditExporter;
 use JayAnta\AiGuard\Tests\TestCase;
 
 class AuditTrailTest extends TestCase
@@ -317,7 +318,7 @@ class AuditTrailTest extends TestCase
         Http::assertSent(function (HttpRequest $request) {
             $line = trim($request->body());
 
-            return str_starts_with($line, 'CEF:0|JayAnta|Laravel AI Guard|3.0.0|tool_call_blocked|Tool Call Blocked|9|')
+            return str_starts_with($line, 'CEF:0|JayAnta|Laravel AI Guard|'.AuditExporter::VERSION.'|tool_call_blocked|Tool Call Blocked|9|')
                 && str_contains($line, 'cs1Label=matchedPattern cs1=a\=b|c')
                 && str_contains($line, 'cs2=tool:send_email')
                 && str_contains($line, 'act=blocked')

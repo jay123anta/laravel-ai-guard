@@ -5,6 +5,26 @@ All notable changes to `jayanta/laravel-ai-guard` are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0](https://github.com/jay123anta/laravel-ai-guard/compare/v3.0.1...v3.1.0) — 2026-09-27
+
+Bot identity as a published contract: other packages and services can learn who a client is — a known bot, a verified agent, a spoofed crawler — without depending on AI Guard. Additive: an app that does not listen sees no change.
+
+### Interop contract
+
+- **`ai-guard.verdict/1`.** Three events — `BotClassified`, `AgentVerified`, `SpoofedBotDetected` — fire at most once per request, when an AI Guard middleware first evaluates it. They carry scalar read-only properties (`schema`, `category`, `token`, `identity`, `status`, `method`, `ip`, `requestMethod`, `path`, `evaluatedAt`) and `toArray()`. Listeners subscribe by class-name string, so they need nothing from this package and keep working when it is absent. A throwing listener is logged and never breaks the request.
+- The same verdict is kept on the request as the `ai_guard.verdict` attribute.
+- The verdict reports identity, not policy: the category is the best match across every category, so a verified Googlebot reads as `search_engines` although that category is not blocked by default.
+- `interop.enabled` (default `true`) stops the events; the attribute is set either way.
+- The canonical payload is `tests/Fixtures/interop/verdict-v1.json`, and the test suite fails if the package drifts from it. See "Interop Contract" in the README for the fields, values and versioning rules.
+
+### Added
+
+- `BotVerifier::METHODS`, the verification methods in their default order.
+
+### Fixed
+
+- SIEM and OpenTelemetry exports reported the package version as 3.0.0 in 3.0.1.
+
 ## [3.0.1](https://github.com/jay123anta/laravel-ai-guard/compare/v3.0.0...v3.0.1) — 2026-09-27
 
 A patch release: laravel/ai 1.x support, a fix for signed agents being refused when two guard middlewares run, and bypasses closed in the output guard, SQL gate, secret patterns, MCP and the audit chain. No configuration or migration changes.

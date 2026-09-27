@@ -1,0 +1,57 @@
+{
+    "schema": "ai-guard.verdict/1",
+    "attribute_key": "ai_guard.verdict",
+    "events": {
+        "bot_classified": "JayAnta\\AiGuard\\Events\\BotClassified",
+        "agent_verified": "JayAnta\\AiGuard\\Events\\AgentVerified",
+        "spoofed_bot_detected": "JayAnta\\AiGuard\\Events\\SpoofedBotDetected"
+    },
+    "attribute": {
+        "schema": "ai-guard.verdict/1",
+        "bot": {
+            "category": "ai_agents",
+            "token": null,
+            "identity": "chatgpt.com"
+        },
+        "verification": {
+            "status": "verified",
+            "method": "web_bot_auth"
+        },
+        "evaluated_at": "2026-09-27T10:15:00+00:00"
+    },
+    "event": {
+        "schema": "ai-guard.verdict/1",
+        "bot": {
+            "category": "ai_agents",
+            "token": null,
+            "identity": "chatgpt.com"
+        },
+        "verification": {
+            "status": "verified",
+            "method": "web_bot_auth"
+        },
+        "evaluated_at": "2026-09-27T10:15:00+00:00",
+        "request": {
+            "ip": "127.0.0.1",
+            "method": "GET",
+            "path": "checkout"
+        }
+    },
+    "event_properties": {
+        "schema": "string",
+        "category": "?string",
+        "token": "?string",
+        "identity": "?string",
+        "status": "?string",
+        "method": "?string",
+        "ip": "string",
+        "requestMethod": "string",
+        "path": "string",
+        "evaluatedAt": "string"
+    },
+    "enums": {
+        "bot.category": ["ai_training", "ai_search", "ai_agents", "search_engines", "seo_tools", "scrapers", "bad_bots", "data_harvesters"],
+        "verification.status": ["verified", "spoofed", "unverified"],
+        "verification.method": ["web_bot_auth", "ip_ranges", "reverse_dns"]
+    }
+}

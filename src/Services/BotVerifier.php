@@ -19,6 +19,9 @@ class BotVerifier
 
     public const UNVERIFIED = 'unverified';
 
+    /** Verification methods, in the order they are tried by default */
+    public const METHODS = ['web_bot_auth', 'ip_ranges', 'reverse_dns'];
+
     // Internal: where the per-request verdict is kept. Not part of any public contract.
     private const REQUEST_ATTRIBUTE = 'ai_guard.verification';
 
@@ -78,7 +81,7 @@ class BotVerifier
     private function verifyRequest(Request $request): array
     {
 
-        $methods = $this->config['bot_verification']['methods'] ?? ['web_bot_auth', 'ip_ranges', 'reverse_dns'];
+        $methods = $this->config['bot_verification']['methods'] ?? self::METHODS;
         $signatureDetail = null;
 
         if (in_array('web_bot_auth', $methods, true)) {

@@ -4,9 +4,11 @@ namespace JayAnta\AiGuard\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
+use JayAnta\AiGuard\Services\AiDetector;
 use JayAnta\AiGuard\Services\BotSignatures;
 use JayAnta\AiGuard\Services\BotVerifier;
 use JayAnta\AiGuard\Support\ReportsThreats;
+use JayAnta\AiGuard\Support\RequestVerdict;
 
 /**
  * Who may use a page on a person's behalf: AI agents (ChatGPT-User, Perplexity-User,
@@ -61,6 +63,12 @@ class AiAgentPolicyMiddleware
      */
     private function agent(Request $request): ?array
     {
+        // Who the client is, kept on the request and announced once (interop contract). A
+        // whitelisted client is not evaluated, the same as in the main middleware.
+        if (! app(AiDetector::class)->isWhitelisted($request)) {
+            RequestVerdict::for($request);
+        }
+
         $verification = $this->verifier->isEnabled() ? $this->verifier->verify($request) : null;
 
         // A signed agent is an agent whatever user-agent it browses with
